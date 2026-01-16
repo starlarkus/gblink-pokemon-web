@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PokemonGB Online Trades</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+    <div id="app">
+        <div class="header-row">
+            <h1>PokemonGB Online Trades</h1>
+            <button id="btn-settings" class="settings-btn" title="Settings">⚙️ Settings</button>
+        </div>
+
+        <div class="card">
+            <h2>Trade Setup</h2>
+            <div class="form-group">
+                <label>Generation:</label>
+                <div class="btn-group" id="gen-select">
+                    <button type="button" class="btn-option" data-value="1">Gen 1</button>
+                    <button type="button" class="btn-option" data-value="2">Gen 2</button>
+                    <button type="button" class="btn-option" data-value="3">Gen 3</button>
+                </div>
+            </div>
+            <div class="form-group" id="trade-type-group" style="display: none;">
+                <div class="trade-type-header">
+                    <label>Trade Type:</label>
+                    <span id="game-versions" class="game-versions"></span>
+                </div>
+                <div class="btn-group" id="trade-type-select">
+                    <button type="button" class="btn-option selected" data-value="link">2-Player</button>
+                    <button type="button" class="btn-option" data-value="pool">Pool Trade</button>
+                </div>
+            </div>
+            <div class="form-group" id="room-code-group" style="display: none;">
+                <label for="room-code">Room Code:</label>
+                <input type="text" id="room-code" placeholder="12345" maxlength="5" pattern="[0-9]{5}">
+                <button id="btn-generate-room" type="button">Generate</button>
+            </div>
+            <div class="button-row">
+                <div class="usb-button-group">
+                    <button id="btn-connect-usb">Connect USB</button>
+                    <div class="usb-status-box">
+                        <span id="usb-status" class="status disconnected">Disconnected</span>
+                    </div>
+                </div>
+                <div class="button-row-right">
+                    <button id="btn-time-capsule" class="btn-toggle" style="display: none;">Time Capsule: OFF</button>
+                    <button id="btn-send-multiboot" style="display: none;">Send Multiboot</button>
+                    <button id="btn-start-trade" disabled>Start Trade</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Negotiation Popup -->
+        <div id="negotiation-popup" class="card negotiation-card" style="display: none;">
+            <h2>Mode Negotiation</h2>
+            <p id="negotiation-message">The other player wants to do a Buffered trade.</p>
+            <p>Would you like to switch to their mode?</p>
+            <div class="negotiation-buttons">
+                <button id="btn-negotiate-yes" class="btn-yes">Yes, Switch</button>
+                <button id="btn-negotiate-no" class="btn-no">No, Keep Mine</button>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>Logs</h2>
+            <div id="log-container"></div>
+        </div>
+    </div>
+
+    <!-- Settings Modal -->
+    <div id="settings-modal" class="modal-overlay" style="display: none;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Settings</h2>
+                <button id="btn-close-settings" class="modal-close">&times;</button>
+            </div>
+
+            <div class="settings-section">
+                <h3>General Options</h3>
+                <div class="setting-item setting-item-full">
+                    <label for="setting-server-url">Server URL:</label>
+                    <span class="default-indicator" data-setting="serverUrl"></span>
+                </div>
+                <div class="setting-item">
+                    <input type="text" id="setting-server-url" class="setting-input-url">
+                </div>
+                <div class="setting-item">
+                    <label for="setting-japanese">Japanese Game:</label>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="setting-japanese">
+                        <span class="toggle-slider"></span>
+                    </label>
+                    <span class="default-indicator" data-setting="isJapanese"></span>
+                </div>
+                <div class="setting-item">
+                    <label for="setting-sanity-checks">Sanity Checks:</label>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="setting-sanity-checks" checked>
+                        <span class="toggle-slider"></span>
+                    </label>
+                    <span class="default-indicator" data-setting="doSanityChecks"></span>
+                </div>
+                <div class="setting-item">
+                    <label for="setting-verbose">Verbose Logging:</label>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="setting-verbose">
+                        <span class="toggle-slider"></span>
+                    </label>
+                    <span class="default-indicator" data-setting="verbose"></span>
+                </div>
+                <div class="setting-item">
+                    <label for="setting-dark-mode">Dark Mode:</label>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="setting-dark-mode" checked>
+                        <span class="toggle-slider"></span>
+                    </label>
+                    <span class="default-indicator" data-setting="darkMode"></span>
+                </div>
+            </div>
+
+            <div class="settings-section">
+                <h3>2-Player Trade Options</h3>
+                <div class="setting-item">
+                    <label for="setting-buffered">Buffered Trading:</label>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="setting-buffered">
+                        <span class="toggle-slider"></span>
+                    </label>
+                    <span class="default-indicator" data-setting="isBuffered"></span>
+                </div>
+                <div class="setting-item">
+                    <label for="setting-crash-sync">Crash on Sync Drop:</label>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="setting-crash-sync" checked>
+                        <span class="toggle-slider"></span>
+                    </label>
+                    <span class="default-indicator" data-setting="crashOnSyncDrop"></span>
+                </div>
+            </div>
+
+            <div class="settings-section">
+                <h3>Pool Trade Options</h3>
+                <div class="setting-item">
+                    <label for="setting-max-level">Max Level:</label>
+                    <div class="slider-group">
+                        <input type="range" id="setting-max-level-slider" min="1" max="100" value="100"
+                            class="level-slider">
+                        <input type="number" id="setting-max-level" min="1" max="100" value="100"
+                            class="setting-level-number">
+                    </div>
+                    <span class="default-indicator" data-setting="maxLevel"></span>
+                </div>
+                <div class="setting-item">
+                    <label for="setting-convert-eggs">Convert to Eggs:</label>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="setting-convert-eggs">
+                        <span class="toggle-slider"></span>
+                    </label>
+                    <span class="default-indicator" data-setting="convertToEggs"></span>
+                </div>
+            </div>
+
+            <div class="modal-footer">
+                <button id="btn-reset-defaults" class="btn-secondary">Reset to Defaults</button>
+                <button id="btn-save-settings" class="btn-primary">Save & Close</button>
+            </div>
+        </div>
+    </div>
+    <script type="module" src="src/main.js?v=v86"></script>
+</body>
+
+</html>

@@ -1,0 +1,643 @@
+:root {
+    /* Dark Mode (Default) */
+    --bg-color: #121212;
+    --card-bg: #1e1e1e;
+    --text-color: #e0e0e0;
+    --heading-color: #ffffff;
+    --primary-color: #bb86fc;
+    --primary-hover: #9b67e0;
+    --success-color: #03dac6;
+    --error-color: #cf6679;
+    --border-radius: 8px;
+    --input-bg: #2c2c2c;
+    --input-border: #444;
+    --border-color: #333;
+    --log-bg: #000000;
+}
+
+body.light-mode {
+    /* Light Mode */
+    --bg-color: #f0f2f5;
+    --card-bg: #ffffff;
+    --text-color: #333;
+    --heading-color: #2c3e50;
+    --primary-color: #007bff;
+    --primary-hover: #0069d9;
+    --success-color: #28a745;
+    --error-color: #dc3545;
+    --input-bg: #ffffff;
+    --input-border: #ddd;
+    --border-color: #eee;
+    --log-bg: #1e1e1e;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background-color: var(--bg-color);
+    color: var(--text-color);
+    margin: 0;
+    padding: 20px;
+    display: flex;
+    justify-content: center;
+    transition: background-color 0.3s, color 0.3s;
+}
+
+#app {
+    width: 100%;
+    max-width: 600px;
+}
+
+h1 {
+    text-align: center;
+    color: var(--heading-color);
+}
+
+.card {
+    background: var(--card-bg);
+    padding: 20px;
+    border-radius: var(--border-radius);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+    margin-bottom: 20px;
+    transition: background-color 0.3s;
+}
+
+h2 {
+    margin-top: 0;
+    font-size: 1.2rem;
+    border-bottom: 1px solid var(--border-color);
+    padding-bottom: 10px;
+    color: var(--heading-color);
+}
+
+.status-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+}
+
+.status {
+    font-weight: bold;
+}
+
+.status.connected {
+    color: var(--success-color);
+}
+
+.status.disconnected {
+    color: var(--error-color);
+}
+
+button {
+    background-color: var(--primary-color);
+    color: white;
+    /* Keep white for better contrast on primary colors */
+    border: none;
+    padding: 8px 16px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: opacity 0.2s;
+}
+
+body.light-mode button {
+    color: white;
+}
+
+/* Button text colors - use white on dark backgrounds */
+button {
+    color: #fff;
+}
+
+/* Primary colored buttons (purple/blue) - use dark text for contrast */
+button:not(.btn-option):not(.btn-secondary):not(.modal-close):not(:disabled) {
+    color: #000;
+}
+
+body.light-mode button:not(.btn-option):not(.btn-secondary):not(.modal-close):not(:disabled) {
+    color: #fff;
+}
+
+button:hover {
+    opacity: 0.9;
+    background-color: var(--primary-hover);
+}
+
+button:disabled {
+    background-color: #555;
+    cursor: not-allowed;
+    color: #aaa;
+}
+
+body.light-mode button:disabled {
+    background-color: #ccc;
+    color: #666;
+}
+
+
+.form-group {
+    margin-bottom: 15px;
+}
+
+/* Button Group - Segmented Control Style */
+.btn-group {
+    display: flex;
+    gap: 0;
+    border-radius: 6px;
+    overflow: hidden;
+    border: 1px solid var(--input-border);
+}
+
+.btn-option {
+    flex: 1;
+    padding: 10px 16px;
+    background: #3a3a3a;
+    color: #e0e0e0;
+    border: none;
+    border-right: 1px solid var(--input-border);
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 500;
+    transition: all 0.2s ease;
+}
+
+body.light-mode .btn-option {
+    background: #e8e8e8;
+    color: #333;
+}
+
+.btn-option:last-child {
+    border-right: none;
+}
+
+.btn-option:hover:not(.selected) {
+    background: var(--primary-color);
+    color: #000;
+    opacity: 0.7;
+}
+
+.btn-option.selected {
+    background: var(--primary-color);
+    color: #000;
+    font-weight: 600;
+}
+
+body.light-mode .btn-option.selected {
+    background: var(--primary-color);
+    color: #fff;
+    font-weight: 600;
+}
+
+body.light-mode .btn-option:hover:not(.selected) {
+    background: var(--primary-color);
+    color: #fff;
+    opacity: 0.8;
+}
+
+label {
+    display: block;
+    margin-bottom: 5px;
+    font-weight: 500;
+}
+
+select,
+input[type="text"] {
+    width: 100%;
+    padding: 8px;
+    border: 1px solid var(--input-border);
+    border-radius: 4px;
+    background-color: var(--input-bg);
+    color: var(--text-color);
+    box-sizing: border-box;
+    /* Fix width overflow */
+}
+
+#log-container {
+    background: var(--log-bg);
+    color: #00ff00;
+    font-family: monospace;
+    padding: 10px;
+    border-radius: 4px;
+    height: 200px;
+    overflow-y: auto;
+    font-size: 12px;
+}
+
+.log-entry {
+    margin: 2px 0;
+}
+
+#theme-toggle {
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    width: auto;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+    z-index: 1000;
+}
+
+/* Header Row with Settings Button */
+.header-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+}
+
+.header-row h1 {
+    margin: 0;
+}
+
+.settings-btn {
+    padding: 8px 16px;
+    font-size: 14px;
+}
+
+.server-display {
+    font-size: 12px;
+    opacity: 0.8;
+    max-width: 200px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Modal Overlay */
+.modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.7);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 2000;
+}
+
+.modal-content {
+    background: var(--card-bg);
+    border-radius: var(--border-radius);
+    width: 90%;
+    max-width: 500px;
+    max-height: 80vh;
+    overflow-y: auto;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+}
+
+.modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 15px 20px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.modal-header h2 {
+    margin: 0;
+    border: none;
+    padding: 0;
+}
+
+.modal-close {
+    background: none;
+    border: none;
+    font-size: 24px;
+    cursor: pointer;
+    color: var(--text-color);
+    padding: 0;
+    width: 32px;
+    height: 32px;
+}
+
+.modal-close:hover {
+    opacity: 0.7;
+    background: none;
+}
+
+/* Settings Sections */
+.settings-section {
+    padding: 15px 20px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.settings-section:last-of-type {
+    border-bottom: none;
+}
+
+.settings-section h3 {
+    margin: 0 0 15px 0;
+    font-size: 14px;
+    color: var(--primary-color);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+/* Setting Items */
+.setting-item {
+    display: flex;
+    align-items: center;
+    margin-bottom: 12px;
+    gap: 10px;
+}
+
+.setting-item:last-child {
+    margin-bottom: 0;
+}
+
+.setting-item>label:first-child {
+    flex: 1;
+    margin: 0;
+    font-weight: normal;
+}
+
+.setting-item-full {
+    justify-content: space-between;
+}
+
+.setting-input {
+    width: 120px;
+    flex-shrink: 0;
+}
+
+/* Server URL input - full width below label */
+.setting-input-url {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 8px;
+    border: 1px solid var(--input-border);
+    border-radius: 4px;
+    background-color: var(--input-bg);
+    color: var(--text-color);
+}
+
+.setting-number {
+    width: 80px;
+}
+
+.setting-level-number {
+    width: 50px;
+    text-align: center;
+    flex-shrink: 0;
+    padding: 6px;
+    border: 1px solid var(--input-border);
+    border-radius: 4px;
+    background-color: var(--input-bg);
+    color: var(--text-color);
+}
+
+/* Slider group for max level */
+.slider-group {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-shrink: 0;
+}
+
+.level-slider {
+    width: 100px;
+    cursor: pointer;
+}
+
+/* Button row for Connect USB + Start Trade */
+.button-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 10px;
+    justify-content: space-between;
+}
+
+.button-row .status {
+    font-size: 12px;
+}
+
+/* Group buttons on the right side */
+.button-row-right {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+/* Stacked button with subtext (for Time Capsule) */
+.btn-option-stacked {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 6px 12px;
+    line-height: 1.2;
+}
+
+.btn-subtext {
+    font-size: 9px;
+    font-weight: 400;
+    opacity: 0.8;
+}
+
+/* Trade Type Header with Game Versions */
+.trade-type-header {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    margin-bottom: 5px;
+}
+
+.game-versions {
+    font-size: 12px;
+    color: var(--primary-color);
+    font-style: italic;
+}
+
+/* Toggle Button (Time Capsule) */
+.btn-toggle {
+    background: #555;
+    color: #aaa;
+    border: 1px solid var(--input-border);
+}
+
+.btn-toggle:hover {
+    background: #666;
+    opacity: 1;
+}
+
+.btn-toggle.active {
+    background: var(--success-color);
+    color: #000;
+    border-color: var(--success-color);
+}
+
+/* Smaller toggle switch for inline use */
+.toggle-switch-small {
+    width: 40px;
+    height: 22px;
+}
+
+.toggle-switch-small .toggle-slider {
+    border-radius: 22px;
+}
+
+.toggle-switch-small .toggle-slider:before {
+    height: 16px;
+    width: 16px;
+    left: 3px;
+    bottom: 3px;
+}
+
+.toggle-switch-small input:checked+.toggle-slider:before {
+    transform: translateX(18px);
+}
+
+/* USB Connect button with attached status */
+.usb-button-group {
+    display: flex;
+    align-items: stretch;
+}
+
+.usb-button-group #btn-connect-usb {
+    border-top-right-radius: 0;
+    border-bottom-right-radius: 0;
+}
+
+.usb-status-box {
+    display: flex;
+    align-items: center;
+    padding: 0 12px;
+    background: var(--input-bg);
+    border: 1px solid var(--input-border);
+    border-left: none;
+    border-top-right-radius: 4px;
+    border-bottom-right-radius: 4px;
+    font-size: 12px;
+}
+
+.usb-status-box .status {
+    font-size: 12px;
+}
+
+/* Negotiation Popup */
+.negotiation-card {
+    border: 2px solid var(--primary-color);
+    text-align: center;
+}
+
+.negotiation-card h2 {
+    color: var(--primary-color);
+}
+
+.negotiation-card p {
+    margin: 10px 0;
+}
+
+.negotiation-buttons {
+    display: flex;
+    gap: 15px;
+    justify-content: center;
+    margin-top: 15px;
+}
+
+.btn-yes {
+    background: var(--success-color);
+    color: #000;
+    padding: 10px 25px;
+    font-weight: 600;
+}
+
+.btn-yes:hover {
+    background: #00cc00;
+}
+
+.btn-no {
+    background: #666;
+    color: #fff;
+    padding: 10px 25px;
+}
+
+.btn-no:hover {
+    background: #888;
+}
+
+/* Toggle Switch */
+.toggle-switch {
+    position: relative;
+    display: inline-block;
+    width: 50px;
+    height: 26px;
+    flex-shrink: 0;
+}
+
+.toggle-switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.toggle-slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: #555;
+    transition: 0.3s;
+    border-radius: 26px;
+}
+
+.toggle-slider:before {
+    position: absolute;
+    content: "";
+    height: 20px;
+    width: 20px;
+    left: 3px;
+    bottom: 3px;
+    background-color: white;
+    transition: 0.3s;
+    border-radius: 50%;
+}
+
+.toggle-switch input:checked+.toggle-slider {
+    background-color: var(--success-color);
+}
+
+.toggle-switch input:checked+.toggle-slider:before {
+    transform: translateX(24px);
+}
+
+/* Default Indicator */
+.default-indicator {
+    font-size: 11px;
+    color: var(--success-color);
+    min-width: 60px;
+    text-align: right;
+}
+
+.default-indicator.is-default::after {
+    content: "(Default)";
+}
+
+.default-indicator.not-default::after {
+    content: "(Modified)";
+    color: var(--primary-color);
+}
+
+/* Modal Footer */
+.modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    padding: 15px 20px;
+    border-top: 1px solid var(--border-color);
+}
+
+.btn-secondary {
+    background-color: #555;
+}
+
+body.light-mode .btn-secondary {
+    background-color: #6c757d;
+}
+
+.btn-primary {
+    background-color: var(--success-color);
+}
