@@ -286,7 +286,7 @@ export class GSCTrading extends TradingProtocol {
                 if (recv === this.NO_DATA) {
                     consecutiveNoData++;
                     if (consecutiveNoData > 100) {
-                        this.log("Too many NO_DATA in sitToTable, retrying...");
+                        if (this.verbose) this.log("Too many NO_DATA in sitToTable, retrying...");
                         consecutiveNoData = 0;
                         stateIndex = 0;
                     }
@@ -302,8 +302,8 @@ export class GSCTrading extends TradingProtocol {
         // 0. Peer Negotiation is now done in startTrade() before entering the room
         if (this.isLinkTrade) {
             this.log("Link Trade: Checking connection status...");
-            if (!this.peerNegotiationDone) {
-                this.log("Warning: Peer negotiation flag not set?");
+            if (!this.initialNegotiationDone) {
+                this.log("Warning: Peer negotiation not complete?");
             }
         }
 
@@ -1645,14 +1645,8 @@ export class GSCTrading extends TradingProtocol {
                 // (GB has already updated its party internally)
                 this.gbPartyData = null;
 
-                // === CRITICAL FIX: Set blank trade flags to false after successful trade ===
-                // sets these based on requires_input() (evolution/moves)
-                // For normal trades without evolution, both are false, meaning:
-                // - Next trade goes to subsequentTradeSequence (MVS2 only, no full section exchange)
-                // Setting both to false is the common case - evolution handling can be added later
-                this.ownBlankTrade = false;
-                this.otherBlankTrade = false;
-                if (this.verbose) this.log(`[DEBUG] Trade complete: Set blank trade flags to false for subsequent trade`);
+                // Blank trade flags are already set correctly by ASK2 exchange (lines 1586/1594)
+                // DO NOT override them here - subsequentTradeSequence needs these values
 
                 // NOTE: ref impl also updates party data LOCALLY (trade_mon) and does NOT
                 // re-send FLL2 after each trade. The server buffer contains STALE FLL2
@@ -2133,15 +2127,9 @@ export class GSCTrading extends TradingProtocol {
         const ourMode = this.isBuffered ? 0x85 : 0x12; // 0x85 = Buffered, 0x12 = Sync
         const bufPacket = new Uint8Array([this.ownCounterId, ourMode]);
         this.ws.sendDict["BUF2"] = bufPacket; // Pre-populate for GET requests
-        if (this.verbose) this.log(`Pre-populated BUF2 for negotiator: ${this.isBuffered ? 'Buffered' : 'Sync'} [Counter: ${this.ownCounterId}]`);
-
-        // Enter room FIRST - don't wait for peer (like ref impl does)
-        await this.enterRoom();
-        this.log("Entered Room.");
-
-        // === PROTOCOL BEHAVIOR: Start BUF2 negotiation IMMEDIATELY after enter_room ===
+        if (this.verbose) this.log(`Pre-populated BUF2 for negotiator: ${this.isBuffered ? 'Buffered' : 'Sync'} [Counter: ${this.ownCounterId}]`);        // === PROTOCOL BEHAVIOR: Start BUF2 negotiation IMMEDIATELY (before enter_room) ===
         // GSCBufferedNegotiator.start() runs in background from the start
-        // It sends BUF2 immediately while the main thread continues to sit_to_table
+        // It sends BUF2 immediately while the main thread continues to enter_room and sit_to_table
         // We'll create a background promise that runs negotiation in parallel
         let negotiationPromise = null;
 
@@ -2169,6 +2157,10 @@ export class GSCTrading extends TradingProtocol {
                 return this.isBuffered;
             })();
         }
+
+        // Enter room - don't wait for peer (like ref impl does)
+        await this.enterRoom();
+        this.log("Entered Room.");
 
         // Outer loop for continuous trading - while True: loop
         while (!this.stopTrade) {
@@ -2310,20 +2302,33 @@ export class GSCTrading extends TradingProtocol {
             this.log("Re-entry with cached data: Skipping MVS2 exchange");
         } else {
             // === NORMAL SUBSEQUENT TRADE (flags False) ===
-            // MVS2 exchange happens in this case
-            if (this.otherBlankTrade) {
-                // Peer IS sending MVS2 and we need it - receive before sections
-                this.log("Waiting for peer's MVS2 (move data) before sections...");
-                await this.receiveMVS2();
+            // MVS2 exchange happens in this case if flags are set
+
+            // Parallel execution to prevent deadlock if both peers are waiting for each other
+            // Both sides typically need to send AND receive MVS2 in a real subsequent trade scenario
+            const promises = [];
+
+            if (this.ownBlankTrade) {
+                this.log("Sending MVS2 (move data) to peer...");
+                promises.push(this.sendMVS2());
+                // sendMVS2 handles its own logging and state updates
             } else {
-                // === 1447-1450: When otherBlankTrade=false, increment OWN counter ===
-                // ref impl increments other_id (counter expected FROM JS) because ref impl expects
-                // JS to have sent MVS2 even though ref impl skips receiving it.
-                // JS must increment ownCounterId to stay in sync with expectation.
+                // Increment own counter if NOT sending (to match ref impl expectation)
+                // ref impl: if not self.own_blank_trade: self.own_id += 1
                 if (this.ownCounterId !== undefined) {
                     this.ownCounterId = (this.ownCounterId + 1) % 256;
                     if (this.verbose) this.log(`[DEBUG] Incremented ownCounterId to ${this.ownCounterId} (matching other_id increment)`);
                 }
+            }
+
+            if (this.otherBlankTrade) {
+                // Peer IS sending MVS2 and we need it
+                this.log("Waiting for peer's MVS2 (move data) before sections...");
+                promises.push(this.receiveMVS2());
+            }
+
+            if (promises.length > 0) {
+                await Promise.all(promises);
             }
         }
 
