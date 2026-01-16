@@ -15,6 +15,10 @@ export class UsbConnection {
                 { vendorId: 0x239A }  // Adafruit boards
             ];
 
+            if (!navigator.usb) {
+                throw new Error("WebUSB is not supported in this browser. Please use Chrome or Edge.");
+            }
+            
             this.device = await navigator.usb.requestDevice({ filters: filters });
             await this.device.open();
 
