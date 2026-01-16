@@ -342,7 +342,7 @@ export class RBYTrading extends GSCTrading {
                 if (recv === this.NO_DATA || recv === 0xFE) {
                     consecutiveNoData++;
                     if (consecutiveNoData > 100) {
-                        this.log("RBY: Too many NO_DATA in sitToTable, retrying...");
+                        if (this.verbose) this.log("RBY: Too many NO_DATA in sitToTable, retrying...");
                         consecutiveNoData = 0;
                         stateIndex = 0;
                     }
