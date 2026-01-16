@@ -2106,8 +2106,10 @@ export class GSCTrading extends TradingProtocol {
         // First, enter the room (only done once at the very beginning)
         this.log(`Starting GSC Trade Protocol (${this.tradeType} mode, ${this.isBuffered ? 'buffered' : 'sync'})...`);
 
-        // Load default party data (ZUBAT) for ghost trades in buffered mode
-        if (this.isBuffered && !GSCUtils.defaultPartyData) {
+        // Load default party data (ZUBAT) for ghost trades
+        // IMPORTANT: Always load for link trades even if initially sync mode,
+        // because negotiation may switch us to buffered mode later!
+        if (this.isLinkTrade && !GSCUtils.defaultPartyData) {
             await GSCUtils.loadDefaultPartyData();
         }
 
