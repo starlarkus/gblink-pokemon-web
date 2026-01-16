@@ -1,6 +1,6 @@
 # GBLink_Pokemon_Web
 
-This is a JavaScript-based web application for **PokemonGB_Online_Trades**, ported from the [original Python implementation](https://github.com/Lorenzooone/PokemonGB_Online_Trades). It allows you to trade Pokémon from your physical Game Boy cartridges directly in the browser using WebUSB.
+This is a work in progress JavaScript-based web application for **PokemonGB_Online_Trades**, ported from the [original Python implementation](https://github.com/Lorenzooone/PokemonGB_Online_Trades). It allows you to trade Pokémon from your physical Game Boy cartridges directly in the browser using WebUSB.
 
 ## Features
 
@@ -20,7 +20,7 @@ This is a JavaScript-based web application for **PokemonGB_Online_Trades**, port
 ## Prerequisites
 
 - **Google Chrome** or **Microsoft Edge** (browsers with WebUSB support).
-- A **Game Boy Link Cable to USB Adapter** Using this firmware:https://github.com/starlarkus/gb-link-firmware-reconfigurable
+- A **Game Boy Link Cable to USB Adapter** Using this firmware: https://github.com/starlarkus/gb-link-firmware-reconfigurable
 - Game Boy Color Link Cable
 
 ## Usage
@@ -32,8 +32,8 @@ This is a JavaScript-based web application for **PokemonGB_Online_Trades**, port
 
 ### Gen 2 Trading (Gold/Silver/Crystal)
 - Go to the Pokémon Center Cable Club.
-- Select "Trade Center".
-- Follow the on-screen instructions to enter the room.
+- Select "Start trade".
+- Initiate Trade in game.
 - For **Pool Trade**: The server will automatically select a Pokémon for you to receive.
 - For **2-Player Trade**: Coordinate with another player in the same room.
 
@@ -42,7 +42,7 @@ This is a JavaScript-based web application for **PokemonGB_Online_Trades**, port
 - Click **"Send Multiboot"** to transfer the multiboot ROM to GBA.
 
 ## Safety & Sanity Checks
-Like the original project, this web port includes sanity checks to ensure that data received from other players (or the server) is valid and won't crash your game or corrupt your save.
+Like the original project, this web port attempts to includes sanity checks to ensure that data received from other players (or the server) is valid and won't crash your game or corrupt your save.
 
 ## Credits
 - Based on [PokemonGB_Online_Trades](https://github.com/Lorenzooone/PokemonGB_Online_Trades) by Lorenzooone.
