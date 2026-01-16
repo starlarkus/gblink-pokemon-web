@@ -74,7 +74,7 @@ export class TradingProtocol {
                 if (recv === this.NO_DATA) {
                     consecutiveNoData++;
                     if (consecutiveNoData > 100) {
-                        this.log("Too many NO_DATA, retrying...");
+                        this.logVerbose("Too many NO_DATA, retrying...");
                         consecutiveNoData = 0;
                         stateIndex = 0; // Reset
                     }
