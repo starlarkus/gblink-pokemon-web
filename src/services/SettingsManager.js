@@ -9,7 +9,7 @@ export class SettingsManager {
     // Default values for all settings
     static DEFAULTS = {
         // General Options
-        serverUrl: 'wss://pokemontradeserver.gblink.io',
+        serverUrl: 'wss://pokemon-gb-online-trades.herokuapp.com',
         isJapanese: false,
         doSanityChecks: true,
         verbose: false,
