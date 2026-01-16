@@ -13,7 +13,7 @@ This is a JavaScript-based web application for **PokemonGB_Online_Trades**, port
     - **Japanese Versions**: Not tested.
     - **Mail**: Not tested.
 - **Multiboot**:
-    - **Sending**: Successfully sends the Gen3toGenx multiboot ROM to GBA. Using the Pokemon-Gen3-to-GenX project. https://github.com/Lorenzooone/Pokemon-Gen3-to-Gen-X
+    - **Sending**: Sends the Gen3toGenx multiboot ROM to GBA. Using the Pokemon-Gen3-to-GenX project. https://github.com/Lorenzooone/Pokemon-Gen3-to-Gen-X
 
 - **Gen 3 (Ruby/Sapphire/Emerald/FRLG)**: Not working yet.
 
