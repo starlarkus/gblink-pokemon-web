@@ -2301,34 +2301,25 @@ export class GSCTrading extends TradingProtocol {
             // Just go straight to trade menu.
             this.log("Re-entry with cached data: Skipping MVS2 exchange");
         } else {
-            // === NORMAL SUBSEQUENT TRADE (flags False) ===
-            // MVS2 exchange happens in this case if flags are set
-
-            // Parallel execution to prevent deadlock if both peers are waiting for each other
-            // Both sides typically need to send AND receive MVS2 in a real subsequent trade scenario
-            const promises = [];
-
-            if (this.ownBlankTrade) {
-                this.log("Sending MVS2 (move data) to peer...");
-                promises.push(this.sendMVS2());
-                // sendMVS2 handles its own logging and state updates
-            } else {
-                // Increment own counter if NOT sending (to match ref impl expectation)
-                // ref impl: if not self.own_blank_trade: self.own_id += 1
-                if (this.ownCounterId !== undefined) {
-                    this.ownCounterId = (this.ownCounterId + 1) % 256;
-                    if (this.verbose) this.log(`[DEBUG] Incremented ownCounterId to ${this.ownCounterId} (matching other_id increment)`);
-                }
-            }
-
+            // === NORMAL SUBSEQUENT TRADE ===
+            // Matching Python gsc_trading.py lines 1441-1460
+            //
+            // Flag semantics (from ref impl):
+            // - other_blank_trade = what PEER now owns (what I sent) needs input
+            //   -> If true, PEER will evolve/learn moves, then send me MVS2
+            //   -> So I should RECEIVE MVS2 from peer BEFORE section exchange
+            //
+            // Step 1: Conditionally receive MVS2 BEFORE section exchange
             if (this.otherBlankTrade) {
-                // Peer IS sending MVS2 and we need it
-                this.log("Waiting for peer's MVS2 (move data) before sections...");
-                promises.push(this.receiveMVS2());
-            }
-
-            if (promises.length > 0) {
-                await Promise.all(promises);
+                // Peer received a special mon (from me) -> peer sends me updated moves
+                this.log("Receiving peer's MVS2 (move data) before sections...");
+                await this.receiveMVS2();
+            } else {
+                // Increment counter if not receiving (to match ref impl)
+                if (this.peerCounterId !== null) {
+                    this.peerCounterId = (this.peerCounterId + 1) % 256;
+                    if (this.verbose) this.log(`[DEBUG] Incremented peerCounterId to ${this.peerCounterId} (not receiving MVS2)`);
+                }
             }
         }
 
@@ -2371,15 +2362,11 @@ export class GSCTrading extends TradingProtocol {
 
         await this.readSection(3, tradeData.section3, skipSync);
 
-        // === MVS2 RECEIVE AFTER SECTIONS ===
-        // Only for normal subsequent trades (flags False).
-        // In re-entry case, ref impl skips everything so no MVS2.
-        if (!isReEntryWithCachedData) {
-            // ref impl sends MVS2 after section exchange: `self.comms.send_move_data_only()`
-            // JS must receive it to keep peerCounterId in sync
-            this.log("Receiving peer's MVS2 (move data)...");
-            await this.receiveMVS2();
-        }
+        // === Step 2: ALWAYS SEND MVS2 AFTER section exchange ===
+        // ref impl line 1460: self.comms.send_move_data_only() (unconditional)
+        // This sends my updated move data to peer after GB interaction
+        this.log("Sending MVS2 (move data) to peer...");
+        await this.sendMVS2();
 
         // === 1462-1463: Reset flags to True BEFORE entering trade menu ===
         // This is critical for resync: if the trade menu exits without completing,
