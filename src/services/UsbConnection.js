@@ -18,7 +18,25 @@ export class UsbConnection {
             if (!navigator.usb) {
                 throw new Error("WebUSB is not supported in this browser. Please use Chrome or Edge.");
             }
-            
+
+            // Clean up any previously paired devices that may be in a stale state
+            // (e.g., from a page refresh without unplugging)
+            try {
+                const existingDevices = await navigator.usb.getDevices();
+                for (const dev of existingDevices) {
+                    if (dev.opened) {
+                        console.log("Found stale device, closing...");
+                        try {
+                            await dev.close();
+                        } catch (e) {
+                            console.log("Could not close stale device:", e);
+                        }
+                    }
+                }
+            } catch (e) {
+                console.log("Cleanup error:", e);
+            }
+
             this.device = await navigator.usb.requestDevice({ filters: filters });
             await this.device.open();
 
