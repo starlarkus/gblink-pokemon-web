@@ -37,6 +37,10 @@ This is a work in progress JavaScript-based web application for **PokemonGB_Onli
 - For **Pool Trade**: The server will automatically select a Pokémon for you to receive.
 - For **2-Player Trade**: Coordinate with another player in the same room.
 
+## Troubleshooting
+- Currently when refreshing the web page most of the time the pico/usb device needs to be reset. Unplugging or pressing reset on the USB adapter should acomplish this
+- If on linux you may need to edit Udev rules. See here https://stackoverflow.com/questions/30983221/chrome-app-fails-to-open-usb-device
+
 ### Multiboot (GBA)
 - Connect your GBA via the link cable with no cartridge inserted.
 - Click **"Send Multiboot"** to transfer the multiboot ROM to GBA.
