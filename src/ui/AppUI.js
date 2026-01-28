@@ -168,7 +168,11 @@ export class AppUI {
         this.settings.set('darkMode', this.elements.settingDarkMode.checked);
         this.settings.set('isBuffered', this.elements.settingBuffered.checked);
         this.settings.set('crashOnSyncDrop', this.elements.settingCrashSync.checked);
-        this.settings.set('maxLevel', parseInt(this.elements.settingMaxLevel.value) || 100);
+        // Clamp maxLevel to min of 5 (lowest viable for pool trading)
+        const maxLevel = Math.max(5, Math.min(100, parseInt(this.elements.settingMaxLevel.value) || 100));
+        this.settings.set('maxLevel', maxLevel);
+        this.elements.settingMaxLevel.value = maxLevel;
+        this.elements.settingMaxLevelSlider.value = maxLevel;
         this.settings.set('convertToEggs', this.elements.settingConvertEggs.checked);
 
         this.applyTheme();
@@ -457,6 +461,8 @@ export class AppUI {
                 {
                     isJapanese: this.settings.get('isJapanese'),
                     verbose: this.settings.get('verbose'),
+                    maxLevel: this.settings.get('maxLevel'),
+                    crashOnSyncDrop: this.settings.get('crashOnSyncDrop'),
                     negotiationPrompt: (peerMode) => this.showNegotiationPrompt(peerMode)
                 }
             );

@@ -9,6 +9,7 @@ export class GSCUtils {
     static trading_party_final_pos = 0x12; // 18
     static trader_info_pos = 0x13; // 19
     static trading_pokemon_pos = 0x15; // 21
+    static level_pos = 0x1F;  // Level position within Pokemon data (31)
     static trading_pokemon_ot_pos = 0x135; // 309
     static trading_pokemon_nickname_pos = 0x177; // 375
     static trading_pokemon_mail_pos = 0; // In section 3

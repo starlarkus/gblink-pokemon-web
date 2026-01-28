@@ -436,6 +436,9 @@ export class GSCTrading extends TradingProtocol {
             for (let i = 0; i < poolName.length; i++) {
                 tradeData.section1[GSCUtils.trader_name_pos + i] = poolName[i];
             }
+
+            // Cap Pokemon level to maxLevel setting (matches Python reference)
+            this.capPoolPokemonLevel(tradeData.section1, GSCUtils);
         }
 
         // 4. Execute Sections - Exchange data with GB
@@ -1962,6 +1965,31 @@ export class GSCTrading extends TradingProtocol {
         this.log(`[POOL-EGG] Set nickname to 'EGG'`);
 
         return data;
+    }
+
+    /**
+     * Cap pool Pokemon level to maxLevel setting.
+     * Based on Python reference (gsc_trading.py lines 324-325):
+     *   if received_mon[0].get_level() > self.trader.max_level:
+     *       received_mon[0].set_level(self.trader.max_level)
+     * 
+     * @param {Uint8Array} section1 - The party data section
+     * @param {Object} utilsClass - GSCUtils or RBYUtils for position constants
+     */
+    capPoolPokemonLevel(section1, utilsClass) {
+        if (!this.maxLevel || this.maxLevel >= 100) return;
+
+        // Level is at trading_pokemon_pos + level_pos within section1
+        // GSC: level_pos = 0x1F, RBY: level_pos = 0x21
+        const levelOffset = utilsClass.trading_pokemon_pos + utilsClass.level_pos;
+
+        if (levelOffset < section1.length) {
+            const currentLevel = section1[levelOffset];
+            if (currentLevel > this.maxLevel) {
+                if (this.verbose) this.log(`[POOL] Capping Pokemon level from ${currentLevel} to ${this.maxLevel}`);
+                section1[levelOffset] = this.maxLevel;
+            }
+        }
     }
 
     /**

@@ -438,6 +438,9 @@ export class RBYTrading extends GSCTrading {
             for (let i = 0; i < poolName.length; i++) {
                 tradeData.section1[RBYUtils.trader_name_pos + i] = poolName[i];
             }
+
+            // Cap Pokemon level to maxLevel setting (matches Python reference)
+            this.capPoolPokemonLevel(tradeData.section1, RBYUtils);
         }
 
         // 3. Execute Sections (only 3 for RBY)
