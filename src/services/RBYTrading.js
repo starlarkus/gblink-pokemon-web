@@ -279,10 +279,10 @@ export class RBYTrading extends GSCTrading {
             if (matched) {
                 stateIndex++;
                 retryCount = 0;
-                this.log(`RBY State advanced to ${stateIndex}. Recv: ${recv.toString(16)}`);
+                if (this.verbose) this.log(`RBY State advanced to ${stateIndex}. Recv: ${recv.toString(16)}`);
             } else {
                 retryCount++;
-                if (retryCount % 50 === 0) {
+                if (this.verbose && retryCount % 50 === 0) {
                     this.log(`RBY: Waiting for sync... State: ${stateIndex}, Recv: ${recv.toString(16)}`);
                 }
             }
@@ -302,8 +302,8 @@ export class RBYTrading extends GSCTrading {
      */
     async sitToTable() {
         this.log("RBY: Sitting at table...");
+        if (this.verbose) this.log(`RBY: START_TRADING_STATES = ${JSON.stringify(this.START_TRADING_STATES[0])}`);
         let stateIndex = 0;
-        let consecutiveNoData = 0;
         let retryCount = 0;
 
         while (stateIndex < this.START_TRADING_STATES[0].length && !this.stopTrade) {
@@ -329,24 +329,16 @@ export class RBYTrading extends GSCTrading {
 
             if (matched) {
                 stateIndex++;
-                consecutiveNoData = 0;
                 retryCount = 0;
-                if (this.verbose) this.log(`RBY Sit State advanced to ${stateIndex}. Recv: ${recv.toString(16)}`);
+                if (this.verbose) this.log(`RBY Sit State ${stateIndex}/${this.START_TRADING_STATES[0].length}: Sent=0x${nextByte.toString(16).padStart(2, '0')}, Recv=0x${recv.toString(16).padStart(2, '0')} ✓`);
             } else {
                 retryCount++;
-                if (retryCount % 50 === 0) {
-                    this.log(`RBY: Waiting for table... State: ${stateIndex}, Recv: ${recv.toString(16)}`);
+                if (this.verbose && (retryCount % 100 === 0 || retryCount < 5)) {
+                    this.log(`RBY sitToTable: State=${stateIndex}, Sent=0x${nextByte.toString(16).padStart(2, '0')}, Recv=0x${recv.toString(16).padStart(2, '0')} (expected: ${[...expectedStates].map(x => '0x' + x.toString(16)).join(',')})`);
                 }
 
-                // Handle No Data (0x00) OR No Input (0xFE)
-                if (recv === this.NO_DATA || recv === 0xFE) {
-                    consecutiveNoData++;
-                    if (consecutiveNoData > 100) {
-                        if (this.verbose) this.log("RBY: Too many NO_DATA in sitToTable, retrying...");
-                        consecutiveNoData = 0;
-                        stateIndex = 0;
-                    }
-                }
+                // Handle No Data (0x00) OR No Input (0xFE) - just keep trying
+                // DO NOT reset stateIndex - Python reference never resets once advanced
             }
             await this.sleep(1);
         }
@@ -358,6 +350,16 @@ export class RBYTrading extends GSCTrading {
      */
     partyHasMail(partyData) {
         return false;
+    }
+
+    /**
+     * Override waitForAcceptDecline to use RBY byte values
+     * RBY: ACCEPT=0x62, DECLINE=0x61 (vs GSC: 0x72, 0x71)
+     */
+    async waitForAcceptDecline(initialValue) {
+        const validSet = new Set([this.ACCEPT_TRADE, this.DECLINE_TRADE]); // 0x62, 0x61
+        if (this.verbose) this.log(`[DEBUG] RBY waitForAcceptDecline: looking for 0x${this.ACCEPT_TRADE.toString(16)} or 0x${this.DECLINE_TRADE.toString(16)}`);
+        return await this.waitForChoice(initialValue, validSet);
     }
 
     /**
@@ -430,6 +432,12 @@ export class RBYTrading extends GSCTrading {
 
             // Create trading data from pool (no egg conversion in Gen 1)
             tradeData = RBYUtils.createTradingData(poolData.slice(1));
+
+            // Set trader name to "POOL" for pool trades
+            const poolName = RBYUtils.textToBytes("POOL");
+            for (let i = 0; i < poolName.length; i++) {
+                tradeData.section1[RBYUtils.trader_name_pos + i] = poolName[i];
+            }
         }
 
         // 3. Execute Sections (only 3 for RBY)
@@ -661,12 +669,38 @@ export class RBYTrading extends GSCTrading {
                     this.ws.sendGetData(this.MSG_SUC);
                     await this.waitForMessage(this.MSG_SUC, 5000);
 
-                    // Reset for next trade
-                    this.bufferedOtherData = null;
-                    this.peerPartyData = null;
-
                     this.log("RBY: Trade round completed successfully!");
-                    break;
+
+                    // For pool trades: send traded Pokemon to pool and get new one
+                    if (!this.isLinkTrade) {
+                        // 1. Send the Pokemon the player traded to us to the pool via SNG1
+                        const tradedPokemonIndex = choice - this.FIRST_TRADE_INDEX;
+                        const tradedPokemonData = this.extractSinglePokemon(choice);
+                        this.log(`RBY Pool: Sending traded Pokemon (slot ${tradedPokemonIndex}) to pool via ${this.MSG_SNG}...`);
+                        this.ws.sendData(this.MSG_SNG, tradedPokemonData);
+
+                        // 2. Get new Pokemon from pool via POL1 (will be used in next tradeStartingSequence)
+                        this.log(`RBY Pool: Requesting new Pokemon from pool via ${this.MSG_POL}...`);
+                        this.ws.sendGetData(this.MSG_POL);
+                        const newPoolData = await this.waitForMessage(this.MSG_POL, 5000);
+
+                        if (newPoolData && newPoolData.length > 1) {
+                            this.log(`RBY Pool: Received new Pokemon from pool (${newPoolData.length} bytes)`);
+                            delete this.ws.recvDict[this.MSG_POL];
+                        } else {
+                            this.log("RBY Pool: No new Pokemon received, pool may be empty");
+                        }
+
+                        // Break to let outer loop handle sit at table + section exchange
+                        // The GB expects to re-enter the trade room and exchange sections again
+                        this.log("RBY Pool: Trade complete. Returning to trade room...");
+                        break;
+                    } else {
+                        // Link trades cache data and may break differently
+                        this.bufferedOtherData = null;
+                        this.peerPartyData = null;
+                        break;
+                    }
                 }
             } else {
                 this.log("RBY: Trade declined. Returning to selection...");

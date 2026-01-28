@@ -430,6 +430,12 @@ export class GSCTrading extends TradingProtocol {
 
             // Construct Trading Data from pool
             tradeData = GSCUtils.createTradingData(poolDataToUse);
+
+            // Set trader name to "POOL" for pool trades
+            const poolName = GSCUtils.textToBytes("POOL");
+            for (let i = 0; i < poolName.length; i++) {
+                tradeData.section1[GSCUtils.trader_name_pos + i] = poolName[i];
+            }
         }
 
         // 4. Execute Sections - Exchange data with GB
@@ -3170,11 +3176,12 @@ export class GSCTrading extends TradingProtocol {
 
     startVEC2Flood() {
         if (this.vec2FloodInterval) return;
-        if (this.verbose) this.log("Starting VEC2 Flood to ensure ref impl sees Version...");
+        if (this.verbose) this.log(`Starting VEC Flood (${this.MSG_VEC}) to ensure ref impl sees Version...`);
         const versionData = new Uint8Array([4, 0, 0, 0, 0, 0]);
+        const msgTag = this.MSG_VEC; // Capture for closure
         this.vec2FloodInterval = setInterval(() => {
             if (this.ws && this.ws.isConnected) {
-                this.ws.sendData("VEC2", versionData);
+                this.ws.sendData(msgTag, versionData);
             }
         }, 200);
     }
