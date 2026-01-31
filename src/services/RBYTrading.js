@@ -212,8 +212,19 @@ export class RBYTrading extends GSCTrading {
                     negotiationPromise = null;
                 }
 
-                // Trade starting sequence (version exchange, random data, sections)
-                await this.tradeStartingSequence();
+                // === PROTOCOL LOGIC: Different behavior for first vs subsequent trades ===
+                // Match GSCTrading: use cached path if bufferedOtherData exists
+                const hasCachedPeerData = this.bufferedOtherData && this.bufferedOtherData[1];
+
+                if ((this.ownBlankTrade && this.otherBlankTrade) && !hasCachedPeerData) {
+                    // FIRST TRADE: No cached data, do full sync exchange
+                    this.log("Full trade sequence (first sit or after reset)...");
+                    await this.tradeStartingSequence();
+                } else {
+                    // SUBSEQUENT/RE-ENTRY: Have cached data, reuse it
+                    this.log("Subsequent trade sequence (reusing cached data)...");
+                    await this.subsequentTradeSequence();
+                }
 
                 // Trade menu - all the real trading action
                 await this.tradeMenuLoop();
@@ -494,6 +505,205 @@ export class RBYTrading extends GSCTrading {
         }
 
         this.log("RBY Trade: Starting sequence complete!");
+    }
+
+    /**
+     * RBY override: Subsequent trade sequence using cached peer data.
+     * Skips full section exchange, just exchanges sections with GB using cached data.
+     * Also handles MVS1 receive/send for move updates.
+     */
+    async subsequentTradeSequence() {
+        if (this.verbose) this.log(`[DEBUG] RBY subsequentTradeSequence: Starting. ownCounterId=${this.ownCounterId}, peerCounterId=${this.peerCounterId}`);
+        if (this.verbose) this.log(`[DEBUG] RBY subsequentTradeSequence: ownBlankTrade=${this.ownBlankTrade}, otherBlankTrade=${this.otherBlankTrade}`);
+
+        // Clear stale cached messages from previous trade
+        delete this.ws.recvDict[this.MSG_CHC];
+        delete this.ws.recvDict[this.MSG_ACP];
+        delete this.ws.recvDict[this.MSG_ASK];
+        delete this.ws.recvDict[this.MSG_SUC];
+        delete this.ws.recvDict[this.MSG_MVS];
+        delete this.ws.recvDict[this.MSG_SNG];
+        if (this.verbose) this.log("[DEBUG] Cleared stale cached messages for subsequent trade");
+
+        if (!this.isLinkTrade) {
+            // Pool trade doesn't support re-entry, just do full sequence
+            await this.tradeStartingSequence();
+            return;
+        }
+
+        // MVS logic for subsequent trades
+        const isReEntryWithCachedData = this.ownBlankTrade && this.otherBlankTrade;
+
+        if (isReEntryWithCachedData) {
+            // Re-entry after STOP_TRADE: skip MVS exchange
+            this.log("Re-entry with cached data: Skipping MVS exchange");
+        } else {
+            // Normal subsequent trade: conditionally receive MVS
+            if (this.otherBlankTrade) {
+                // Peer received a special mon (from me) -> peer sends me updated moves
+                this.log(`Receiving peer's ${this.MSG_MVS} (move data) before sections...`);
+                await this.receiveMVS2(); // Uses this.MSG_MVS internally
+            } else {
+                // Increment counter if not receiving (to match ref impl)
+                if (this.peerCounterId !== null) {
+                    this.peerCounterId = (this.peerCounterId + 1) % 256;
+                    if (this.verbose) this.log(`[DEBUG] Incremented peerCounterId to ${this.peerCounterId} (not receiving MVS)`);
+                }
+            }
+        }
+
+        // Reuse cached peer data for section exchange
+        if (!this.bufferedOtherData) {
+            this.log("[WARN] No cached peer data for subsequent trade - falling back to full sequence");
+            await this.tradeStartingSequence();
+            return;
+        }
+
+        this.log("Using cached peer party data for trade...");
+        const tradeData = {
+            section1: this.bufferedOtherData[1],
+            section2: this.bufferedOtherData[2]
+            // RBY has NO section3 (mail)
+        };
+
+        // Get fresh random data from server
+        this.ws.sendGetData(this.MSG_RAN);
+        const randomData = await this.waitForMessage(this.MSG_RAN);
+        if (this.verbose) this.log(`Random Data received: ${randomData.length} bytes`);
+
+        // Exchange sections with GB using cached peer data (skipSync mode)
+        const skipSync = true;
+        await this.readSection(0, randomData, skipSync);
+        this.gbPartyData = await this.readSection(1, tradeData.section1, skipSync);
+        const gbPatchData = await this.readSection(2, tradeData.section2, skipSync);
+
+        // Apply patches
+        RBYUtils.applyPatches(this.gbPartyData, gbPatchData, false);
+
+        // ALWAYS send MVS after section exchange (unconditional, per ref impl)
+        this.log(`Sending ${this.MSG_MVS} (move data) to peer...`);
+        await this.sendMVS2(); // Uses this.MSG_MVS internally
+
+        // Reset blank trade flags before entering trade menu
+        this.ownBlankTrade = true;
+        this.otherBlankTrade = true;
+        if (this.verbose) this.log("[DEBUG] Reset blank trade flags to true before entering trade menu");
+
+        this.log("RBY Trade: Subsequent sequence complete!");
+    }
+
+    /**
+     * RBY override: Send MVS1 (move data only) to peer.
+     * Uses Gen1 offsets: moves at offset 8, PP at offset 0x1D.
+     */
+    async sendMVS2() {
+        if (this.verbose) this.log(`[DEBUG] RBY sendMVS1: Starting. ownCounterId=${this.ownCounterId}`);
+
+        if (!this.gbPartyData) {
+            this.log("[WARN] RBY sendMVS1: No GB party data - cannot send MVS1");
+            this.ownCounterId = (this.ownCounterId + 1) % 256;
+            return;
+        }
+
+        // Get party size and find last Pokemon
+        const partySize = this.gbPartyData[RBYUtils.trading_party_info_pos];
+        const lastIndex = partySize - 1;
+        if (this.verbose) this.log(`[DEBUG] RBY sendMVS1: Party size=${partySize}, lastIndex=${lastIndex}`);
+
+        // Extract moves and PP from last Pokemon's core data (RBY offsets)
+        const coreStart = RBYUtils.trading_pokemon_pos + (lastIndex * RBYUtils.trading_pokemon_length);
+
+        const moveData = new Uint8Array(8);
+        // RBY: Moves are at offset 8 in core data
+        for (let j = 0; j < 4; j++) {
+            moveData[j] = this.gbPartyData[coreStart + RBYUtils.moves_pos + j];
+        }
+        // RBY: PP is at offset 0x1D (29) in core data
+        for (let j = 0; j < 4; j++) {
+            moveData[4 + j] = this.gbPartyData[coreStart + RBYUtils.pps_pos + j];
+        }
+
+        // Create MVS1 payload: [counter] + [8 bytes move/PP data]
+        const mvsPayload = new Uint8Array(9);
+        mvsPayload[0] = this.ownCounterId;
+        mvsPayload.set(moveData, 1);
+
+        this.ws.sendData(this.MSG_MVS, mvsPayload);
+        this.log(`Sent ${this.MSG_MVS} (Counter: ${this.ownCounterId}): moves=[${moveData.slice(0, 4).join(',')}] pp=[${moveData.slice(4, 8).join(',')}]`);
+
+        this.ownCounterId = (this.ownCounterId + 1) % 256;
+    }
+
+    /**
+     * RBY override: Receive MVS1 (move data only) from peer.
+     * Updates last Pokemon in peer's party with new moves/PP using Gen1 offsets.
+     */
+    async receiveMVS2() {
+        // Clear any stale MVS1 data first
+        delete this.ws.recvDict[this.MSG_MVS];
+
+        if (this.verbose) this.log(`[DEBUG] RBY receiveMVS1: Starting. Expected peerCounterId=${this.peerCounterId}`);
+
+        this.ws.sendGetData(this.MSG_MVS);
+
+        const maxRetries = 500;
+        for (let i = 0; i < maxRetries && !this.stopTrade; i++) {
+            const mvsData = this.ws.recvDict[this.MSG_MVS];
+            if (mvsData && mvsData.length >= 9) {
+                const counter = mvsData[0];
+
+                if (this.peerCounterId === null) {
+                    this.peerCounterId = counter;
+                } else if (counter !== this.peerCounterId) {
+                    const diff = (counter - this.peerCounterId + 256) % 256;
+                    if (diff <= 2) {
+                        this.peerCounterId = counter;
+                    } else {
+                        delete this.ws.recvDict[this.MSG_MVS];
+                        this.ws.sendGetData(this.MSG_MVS);
+                        await this.sleep(100);
+                        continue;
+                    }
+                }
+
+                const moveData = mvsData.slice(1, 9);
+                this.log(`Received ${this.MSG_MVS} (Counter: ${counter}): moves=[${moveData.slice(0, 4).join(',')}] pp=[${moveData.slice(4, 8).join(',')}]`);
+
+                this.peerCounterId = (this.peerCounterId + 1) % 256;
+
+                // Update last Pokemon in peer's buffered party (RBY offsets)
+                if (this.bufferedOtherData && this.bufferedOtherData[1]) {
+                    const peerParty = this.bufferedOtherData[1];
+                    const partySize = peerParty[RBYUtils.trading_party_info_pos];
+                    const lastIndex = partySize - 1;
+
+                    const coreStart = RBYUtils.trading_pokemon_pos + (lastIndex * RBYUtils.trading_pokemon_length);
+
+                    // RBY: Moves at offset 8
+                    for (let j = 0; j < 4; j++) {
+                        peerParty[coreStart + RBYUtils.moves_pos + j] = moveData[j];
+                    }
+                    // RBY: PP at offset 0x1D
+                    for (let j = 0; j < 4; j++) {
+                        peerParty[coreStart + RBYUtils.pps_pos + j] = moveData[4 + j];
+                    }
+
+                    this.log(`Updated peer's last Pokemon (slot ${lastIndex}) with new moves/PP`);
+                }
+
+                delete this.ws.recvDict[this.MSG_MVS];
+                return true;
+            }
+
+            await this.sleep(100);
+            this.ws.sendGetData(this.MSG_MVS);
+        }
+
+        this.log(`[WARN] Timeout waiting for ${this.MSG_MVS}`);
+        if (this.peerCounterId !== null) {
+            this.peerCounterId = (this.peerCounterId + 1) % 256;
+        }
+        return false;
     }
 
     /**
