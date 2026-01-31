@@ -5,6 +5,7 @@ import { RBYTrading } from '../services/RBYTrading.js';
 import { GSCTrading } from '../services/GSCTrading.js';
 import { SettingsManager } from '../services/SettingsManager.js';
 import { multiboot } from '../services/Multiboot.js';
+import { RSESPTrading } from '../services/RSESPTrading.js';
 
 export class AppUI {
     constructor() {
@@ -487,9 +488,17 @@ export class AppUI {
             );
         } else if (gen === "3") {
             // Gen 3 trading requires multiboot first
-            this.log('Gen 3 trading not yet implemented.');
-            this.elements.btnStartTrade.disabled = false;
-            return;
+            this.protocol = new RSESPTrading(
+                this.usb,
+                this.ws,
+                (msg) => this.log(msg),
+                tradeType,
+                isBuffered,
+                doSanityChecks,
+                {
+                    verbose: this.settings.get('verbose')
+                }
+            );
         }
 
         try {
