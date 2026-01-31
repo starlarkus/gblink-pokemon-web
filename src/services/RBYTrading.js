@@ -148,7 +148,9 @@ export class RBYTrading extends GSCTrading {
         }
 
         // Load default party data for ghost trades in buffered mode
-        if (this.isBuffered && !RBYUtils.defaultPartyData) {
+        // IMPORTANT: Always load for link trades even if initially sync mode,
+        // because negotiation may switch us to buffered mode later.
+        if (this.isLinkTrade && !RBYUtils.defaultPartyData) {
             this.log("[RBY] Loading default party data for ghost trades...");
             await RBYUtils.loadDefaultPartyData();
         }
@@ -612,9 +614,26 @@ export class RBYTrading extends GSCTrading {
             this.tradeCounter = (this.tradeCounter + 1) & 0xFF;
             this.log(`Sent CHC1 with Pokemon data: ${chc1Payload.length} bytes`);
 
-            // Server auto-selects for pool trade
-            const serverChoice = this.FIRST_TRADE_INDEX;
-            this.log(`Server auto-selected: 0x${serverChoice.toString(16)}`);
+            // Get peer's/server's Pokemon selection
+            let serverChoice;
+            if (!this.isLinkTrade) {
+                // Pool trade: server auto-selects the pool Pokemon (always first slot)
+                serverChoice = this.FIRST_TRADE_INDEX;
+                this.log(`Pool: Server auto-selected: 0x${serverChoice.toString(16)}`);
+            } else {
+                // Link trade: GET CHC1 from peer to receive their actual selection
+                this.log("Link: Waiting for peer's Pokemon selection (CHC1)...");
+                this.ws.sendGetData(this.MSG_CHC);
+                const peerChoiceData = await this.waitForMessage(this.MSG_CHC, 15000);
+                if (peerChoiceData && peerChoiceData.length >= 2) {
+                    // CHC1 format: Counter (1) + Choice (1) + Pokemon data
+                    serverChoice = peerChoiceData[1];
+                    this.log(`Link: Peer selected: 0x${serverChoice.toString(16)} (Index: ${serverChoice - this.FIRST_TRADE_INDEX})`);
+                } else {
+                    this.log("Link: WARNING - No peer choice received, using first Pokemon");
+                    serverChoice = this.FIRST_TRADE_INDEX;
+                }
+            }
 
             let next = await this.exchangeByte(serverChoice);
             next = await this.waitForNoData(next, serverChoice, 0);
@@ -631,11 +650,25 @@ export class RBYTrading extends GSCTrading {
             this.ws.sendData(this.MSG_ACP, new Uint8Array([acp1Counter, gbAccept]));
             this.tradeCounter = (this.tradeCounter + 1) & 0xFF;
 
-            // Get server response
+            // Get server/peer accept response
             this.ws.sendGetData(this.MSG_ACP);
-            await this.waitForMessage(this.MSG_ACP, 5000);
+            const serverAcceptData = await this.waitForMessage(this.MSG_ACP, 5000);
 
-            const serverAccept = this.ACCEPT_TRADE;
+            let serverAccept;
+            if (!this.isLinkTrade) {
+                // Pool: server always accepts
+                serverAccept = this.ACCEPT_TRADE;
+            } else {
+                // Link: parse peer's actual response from ACP1
+                if (serverAcceptData && serverAcceptData.length >= 2) {
+                    serverAccept = serverAcceptData[1];
+                    this.log(`Link: Peer decision: ${serverAccept === this.ACCEPT_TRADE ? 'ACCEPT' : 'DECLINE'}`);
+                } else {
+                    this.log("Link: WARNING - No peer accept received, assuming decline");
+                    serverAccept = this.DECLINE_TRADE;
+                }
+            }
+
             next = await this.exchangeByte(serverAccept);
             next = await this.waitForNoData(next, serverAccept, 0);
             next = await this.waitForNoInput(next);
@@ -699,9 +732,11 @@ export class RBYTrading extends GSCTrading {
                         this.log("RBY Pool: Trade complete. Returning to trade room...");
                         break;
                     } else {
-                        // Link trades cache data and may break differently
-                        this.bufferedOtherData = null;
-                        this.peerPartyData = null;
+                        // Link trade: Keep bufferedOtherData cached for subsequent trades
+                        // The ghost trade only happens on the first trade when bufferedOtherData is null
+                        // On subsequent trades, we reuse the cached peer party data
+                        // This prevents repeating the ghost trade phase every time
+                        this.log("Link: Trade complete. Cached data preserved for next trade.");
                         break;
                     }
                 }
