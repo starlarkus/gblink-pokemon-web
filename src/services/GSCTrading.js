@@ -116,6 +116,11 @@ export class GSCTrading extends TradingProtocol {
         this.POKEMON_ITEM_OFFSET = 1;
     }
 
+    // ==================== MESSAGE TAG GETTERS ====================
+    // Override in subclasses for Gen1 (BUF1/NEG1) vs Gen2 (BUF2/NEG2)
+    get MSG_BUF() { return "BUF2"; }
+    get MSG_NEG() { return "NEG2"; }
+
     /**
      * Check if a party has any Pokemon holding mail.
      * @param {Uint8Array} partyData - The 444-byte party data section
@@ -158,17 +163,20 @@ export class GSCTrading extends TradingProtocol {
         // Send empty message to trigger server to check for pairing
         this.ws.sendRaw(new Uint8Array(0));
 
-        // ref impl doesn't send "CLIENT", but we know peer is connected when we receive their BUF2 data
-        // Check if we already have peer's BUF2 in recvDict (from GSCBufferedNegotiator)
+        // Capture MSG_BUF for use in closures (arrow functions preserve 'this', but let's be explicit)
+        const msgBuf = this.MSG_BUF;
+
+        // ref impl doesn't send "CLIENT", but we know peer is connected when we receive their buffered data
+        // Check if we already have peer's data in recvDict (from GSCBufferedNegotiator)
         return new Promise((resolve, reject) => {
             const timeout = setTimeout(() => {
                 reject(new Error("Timeout waiting for peer"));
             }, 120000); // 2 minute timeout
 
-            // Check immediately if we already received BUF2 from peer
-            if (this.ws.recvDict["BUF2"]) {
+            // Check immediately if we already received buffered data from peer
+            if (this.ws.recvDict[msgBuf]) {
                 clearTimeout(timeout);
-                this.log("Peer already connected (received BUF2)! Starting trade...");
+                this.log(`Peer already connected (received ${msgBuf})! Starting trade...`);
                 resolve();
                 return;
             }
@@ -196,19 +204,20 @@ export class GSCTrading extends TradingProtocol {
 
             this.ws.ws.addEventListener('message', checkMessage);
 
-            // ALSO poll for BUF2 - ref impl sends it but we need to GET it
+            // ALSO poll for buffered data - ref impl sends it but we need to GET it
             const pollInterval = setInterval(() => {
-                this.ws.sendGetData("BUF2");
-                if (this.ws.recvDict["BUF2"]) {
+                this.ws.sendGetData(msgBuf);
+                if (this.ws.recvDict[msgBuf]) {
                     clearTimeout(timeout);
                     clearInterval(pollInterval);
                     this.ws.ws.removeEventListener('message', checkMessage);
-                    this.log("Peer already connected (received BUF2)! Starting trade...");
+                    this.log(`Peer already connected (received ${msgBuf})! Starting trade...`);
                     resolve();
                 }
             }, 500);
         });
     }
+
 
     async start() {
         this.log(`Starting GSC Trade Protocol (${this.tradeType} mode, ${this.isBuffered ? 'buffered' : 'sync'}, sanity checks: ${this.doSanityChecks})...`);
@@ -229,14 +238,14 @@ export class GSCTrading extends TradingProtocol {
         }
 
 
-        // For link trade, set up BUF2 (buffered mode negotiation)
+        // For link trade, set up buffered mode negotiation
         if (this.isLinkTrade) {
             // Send our buffered preference to other player
             // Format: Counter (1) + Buffered value (1): 0=sync, non-zero=buffered
             const bufferedValue = this.isBuffered ? 0x01 : 0x00;
             const bufCounter = 0x00; // Start with counter 0
-            this.ws.sendData("BUF2", new Uint8Array([bufCounter, bufferedValue]));
-            if (this.verbose) this.log(`Sent BUF2: ${this.isBuffered ? 'buffered' : 'sync'} mode preference`);
+            this.ws.sendData(this.MSG_BUF, new Uint8Array([bufCounter, bufferedValue]));
+            if (this.verbose) this.log(`Sent ${this.MSG_BUF}: ${this.isBuffered ? 'buffered' : 'sync'} mode preference`);
 
             // Note: waitForPeer() may not be needed if other player is already connected
             // The server starts proxying messages immediately once both are in the room
@@ -1689,14 +1698,14 @@ export class GSCTrading extends TradingProtocol {
         // 1. Send our buffered preference with counter
         const ourMode = this.isBuffered ? 0x85 : 0x12;
         const bufPacket = new Uint8Array([this.ownCounterId, ourMode]);
-        this.ws.sendData("BUF2", bufPacket);
-        if (this.verbose) this.log(`Sent BUF2: ${this.isBuffered ? 'Buffered (0x85)' : 'Sync (0x12)'} [Counter: ${this.ownCounterId}]`);
+        this.ws.sendData(this.MSG_BUF, bufPacket);
+        if (this.verbose) this.log(`Sent ${this.MSG_BUF}: ${this.isBuffered ? 'Buffered (0x85)' : 'Sync (0x12)'} [Counter: ${this.ownCounterId}]`);
         this.ownCounterId = (this.ownCounterId + 1) % 256;
 
         // 2. Wait and get peer's preference
         await this.sleep(500);
-        this.ws.sendGetData("BUF2");
-        const peerBuf = await this.waitForMessage("BUF2");
+        this.ws.sendGetData(this.MSG_BUF);
+        const peerBuf = await this.waitForMessage(this.MSG_BUF);
 
         let peerMode = 0x12; // Default to Sync
         let peerCounter = 0;
@@ -1708,13 +1717,13 @@ export class GSCTrading extends TradingProtocol {
         const ourBuffered = this.isBuffered;
         const peerBuffered = (peerMode === 0x85);
 
-        // Initialize peerCounterId from BUF2
+        // Initialize peerCounterId from buffered message
         // The next message from peer will be peerCounter+1
         this.peerCounterId = (peerCounter + 1) % 256;
-        if (this.verbose) this.log(`Peer BUF2: ${peerBuffered ? 'Buffered (0x85)' : 'Sync (0x12)'} [Counter: ${peerCounter}]`);
+        if (this.verbose) this.log(`Peer ${this.MSG_BUF}: ${peerBuffered ? 'Buffered (0x85)' : 'Sync (0x12)'} [Counter: ${peerCounter}]`);
         if (this.verbose) this.log(`[DEBUG] Initialized peerCounterId=${this.peerCounterId} (next expected from peer)`);
 
-        // Track last peer BUF2 counter to detect new messages
+        // Track last peer buffered counter to detect new messages
         this.lastPeerBufCounter = peerCounter;
 
         // 3. Check if modes match
@@ -1723,39 +1732,39 @@ export class GSCTrading extends TradingProtocol {
             return;
         }
 
-        // 4. Modes differ - need to negotiate via NEG2
-        this.log("Modes differ! Negotiating via NEG2...");
+        // 4. Modes differ - need to negotiate via negotiation message
+        this.log(`Modes differ! Negotiating via ${this.MSG_NEG}...`);
 
         let weAdapt = null; // null = undetermined, true = we adapt, false = peer adapts
         let attempts = 0;
         const MAX_ATTEMPTS = 10;
 
-        // Step 1: Exchange NEG2 values until one wins (like while change_buffered is None)
+        // Step 1: Exchange negotiation values until one wins (like while change_buffered is None)
         while (weAdapt === null && attempts < MAX_ATTEMPTS && !this.stopTrade) {
             // Send random value
             const ourNegValue = Math.floor(Math.random() * 256);
             const negPacket = new Uint8Array([this.ownCounterId, ourNegValue]);
-            this.ws.sendData("NEG2", negPacket);
-            this.log(`Sent NEG2: ${ourNegValue} [Counter: ${this.ownCounterId}]`);
+            this.ws.sendData(this.MSG_NEG, negPacket);
+            this.log(`Sent ${this.MSG_NEG}: ${ourNegValue} [Counter: ${this.ownCounterId}]`);
             this.ownCounterId = (this.ownCounterId + 1) % 256;
 
             // Get peer's random value
             await this.sleep(200);
-            this.ws.sendGetData("NEG2");
-            const peerNeg = await this.waitForMessage("NEG2");
+            this.ws.sendGetData(this.MSG_NEG);
+            const peerNeg = await this.waitForMessage(this.MSG_NEG);
 
             if (peerNeg && peerNeg.length > 0) {
                 const peerNegValue = peerNeg.length >= 2 ? peerNeg[1] : peerNeg[0];
-                this.log(`Peer NEG2: ${peerNegValue}`);
+                this.log(`Peer ${this.MSG_NEG}: ${peerNegValue}`);
 
                 if (peerNegValue > ourNegValue) {
                     // We lost - we must adapt to peer's mode
                     weAdapt = true;
-                    this.log("NEG2 result: We adapt to peer's mode");
+                    this.log(`${this.MSG_NEG} result: We adapt to peer's mode`);
                 } else if (peerNegValue < ourNegValue) {
                     // We won - peer must adapt to our mode
                     weAdapt = false;
-                    this.log("NEG2 result: Peer adapts to our mode");
+                    this.log(`${this.MSG_NEG} result: Peer adapts to our mode`);
                 }
                 // If equal, try again
             }
@@ -1798,24 +1807,24 @@ export class GSCTrading extends TradingProtocol {
                 // Send our (possibly unchanged) mode
                 const newModeValue = this.isBuffered ? 0x85 : 0x12;
                 const updatePacket = new Uint8Array([this.ownCounterId, newModeValue]);
-                this.ws.sendData("BUF2", updatePacket);
-                if (this.verbose) this.log(`Sent BUF2: ${this.isBuffered ? 'Buffered' : 'Sync'} [Counter: ${this.ownCounterId}]`);
+                this.ws.sendData(this.MSG_BUF, updatePacket);
+                if (this.verbose) this.log(`Sent ${this.MSG_BUF}: ${this.isBuffered ? 'Buffered' : 'Sync'} [Counter: ${this.ownCounterId}]`);
                 this.ownCounterId = (this.ownCounterId + 1) % 256;
 
                 // Update our tracked mode
                 currentMode = this.isBuffered;
             } else {
-                // Peer's turn to decide - wait for their NEW BUF2
+                // Peer's turn to decide - wait for their NEW buffered message
                 this.log("Waiting for other player's decision...");
 
-                // force_receive keeps polling for our NEG2.
+                // force_receive keeps polling for our negotiation message.
                 // We must keep resending it so ref impl can determine who won.
-                // Store the last NEG2 we sent so we can resend it.
-                const lastNegPacket = this.ws.sendDict["NEG2"];
+                // Store the last negotiation message we sent so we can resend it.
+                const lastNegPacket = this.ws.sendDict[this.MSG_NEG];
 
-                // Clear cached BUF2 so we wait for a new one
-                if (this.ws.recvDict && this.ws.recvDict["BUF2"]) {
-                    delete this.ws.recvDict["BUF2"];
+                // Clear cached buffered message so we wait for a new one
+                if (this.ws.recvDict && this.ws.recvDict[this.MSG_BUF]) {
+                    delete this.ws.recvDict[this.MSG_BUF];
                 }
 
                 // Poll until we get peer's response
@@ -1826,20 +1835,20 @@ export class GSCTrading extends TradingProtocol {
                 while (!gotResponse && !this.stopTrade && (Date.now() - startTime < timeout)) {
                     await this.sleep(500);
 
-                    // Keep NEG2 available for ref impl to GET (it polls repeatedly)
+                    // Keep negotiation message available for ref impl to GET (it polls repeatedly)
                     if (lastNegPacket) {
-                        this.ws.sendData("NEG2", lastNegPacket);
+                        this.ws.sendData(this.MSG_NEG, lastNegPacket);
                     }
 
-                    // Also keep our BUF2 available - ref impl alternates between
-                    // polling for NEG2 (to determine winner) and BUF2 (to get decisions)
-                    const ourBuf2 = this.ws.sendDict["BUF2"];
-                    if (ourBuf2) {
-                        this.ws.sendData("BUF2", ourBuf2);
+                    // Also keep our buffered message available - ref impl alternates between
+                    // polling for negotiation (to determine winner) and buffered (to get decisions)
+                    const ourBuf = this.ws.sendDict[this.MSG_BUF];
+                    if (ourBuf) {
+                        this.ws.sendData(this.MSG_BUF, ourBuf);
                     }
 
-                    this.ws.sendGetData("BUF2");
-                    const updatedBuf = await this.waitForMessage("BUF2", 2000);
+                    this.ws.sendGetData(this.MSG_BUF);
+                    const updatedBuf = await this.waitForMessage(this.MSG_BUF, 2000);
 
                     if (updatedBuf && updatedBuf.length >= 2) {
                         const newPeerCounter = updatedBuf[0];
@@ -1866,6 +1875,7 @@ export class GSCTrading extends TradingProtocol {
 
         this.log(`Final mode: ${this.isBuffered ? 'Buffered' : 'Sync'}`);
     }
+
 
     // ==================== JAPANESE MAIL CONVERSION ====================
 
@@ -1993,13 +2003,13 @@ export class GSCTrading extends TradingProtocol {
     }
 
     /**
-     * Complete buffered mode negotiation after BUF2 was already sent.
-     * Receives peer's BUF2 response and handles NEG2 if modes differ.
+     * Complete buffered mode negotiation after buffered message was already sent.
+     * Receives peer's buffered response and handles negotiation if modes differ.
      */
     async completeBufferedNegotiation() {
-        // Get peer's BUF2 response (may already be cached)
-        this.ws.sendGetData("BUF2");
-        const peerBuf = await this.waitForMessage("BUF2");
+        // Get peer's buffered response (may already be cached)
+        this.ws.sendGetData(this.MSG_BUF);
+        const peerBuf = await this.waitForMessage(this.MSG_BUF);
 
         let peerMode = 0x12; // Default to Sync
         let peerCounter = 0;
@@ -2011,12 +2021,12 @@ export class GSCTrading extends TradingProtocol {
         const ourBuffered = this.isBuffered;
         const peerBuffered = (peerMode === 0x85);
 
-        // Initialize peerCounterId from BUF2
+        // Initialize peerCounterId from buffered message
         this.peerCounterId = (peerCounter + 1) % 256;
-        if (this.verbose) this.log(`Peer BUF2: ${peerBuffered ? 'Buffered (0x85)' : 'Sync (0x12)'} [Counter: ${peerCounter}]`);
+        if (this.verbose) this.log(`Peer ${this.MSG_BUF}: ${peerBuffered ? 'Buffered (0x85)' : 'Sync (0x12)'} [Counter: ${peerCounter}]`);
         if (this.verbose) this.log(`[DEBUG] Initialized peerCounterId=${this.peerCounterId}`);
 
-        // Track last peer BUF2 counter to detect new messages
+        // Track last peer buffered counter to detect new messages
         this.lastPeerBufCounter = peerCounter;
 
         // Check if modes match
@@ -2025,35 +2035,35 @@ export class GSCTrading extends TradingProtocol {
             return;
         }
 
-        // Modes differ - negotiate via NEG2 (same logic as negotiateBufferedMode)
-        this.log("Modes differ! Negotiating via NEG2...");
+        // Modes differ - negotiate via negotiation message (same logic as negotiateBufferedMode)
+        this.log(`Modes differ! Negotiating via ${this.MSG_NEG}...`);
 
         let weAdapt = null;
         let attempts = 0;
         const MAX_ATTEMPTS = 10;
 
-        // Step 1: Exchange NEG2 values until one wins
+        // Step 1: Exchange negotiation values until one wins
         while (weAdapt === null && attempts < MAX_ATTEMPTS && !this.stopTrade) {
             const ourNegValue = Math.floor(Math.random() * 256);
             const negPacket = new Uint8Array([this.ownCounterId, ourNegValue]);
-            this.ws.sendData("NEG2", negPacket);
-            this.log(`Sent NEG2: ${ourNegValue} [Counter: ${this.ownCounterId}]`);
+            this.ws.sendData(this.MSG_NEG, negPacket);
+            this.log(`Sent ${this.MSG_NEG}: ${ourNegValue} [Counter: ${this.ownCounterId}]`);
             this.ownCounterId = (this.ownCounterId + 1) % 256;
 
             await this.sleep(200);
-            this.ws.sendGetData("NEG2");
-            const peerNeg = await this.waitForMessage("NEG2");
+            this.ws.sendGetData(this.MSG_NEG);
+            const peerNeg = await this.waitForMessage(this.MSG_NEG);
 
             if (peerNeg && peerNeg.length > 0) {
                 const peerNegValue = peerNeg.length >= 2 ? peerNeg[1] : peerNeg[0];
-                this.log(`Peer NEG2: ${peerNegValue}`);
+                this.log(`Peer ${this.MSG_NEG}: ${peerNegValue}`);
 
                 if (peerNegValue > ourNegValue) {
                     weAdapt = true;
-                    this.log("NEG2 result: We adapt to peer's mode");
+                    this.log(`${this.MSG_NEG} result: We adapt to peer's mode`);
                 } else if (peerNegValue < ourNegValue) {
                     weAdapt = false;
-                    this.log("NEG2 result: Peer adapts to our mode");
+                    this.log(`${this.MSG_NEG} result: Peer adapts to our mode`);
                 }
             }
             attempts++;
@@ -2065,7 +2075,7 @@ export class GSCTrading extends TradingProtocol {
             return;
         }
 
-        // Step 2: Sync modes via updated BUF2 exchange
+        // Step 2: Sync modes via updated buffered exchange
         let currentMode = ourBuffered;
         let peerCurrentMode = peerBuffered;
 
@@ -2089,17 +2099,17 @@ export class GSCTrading extends TradingProtocol {
 
                 const newModeValue = this.isBuffered ? 0x85 : 0x12;
                 const updatePacket = new Uint8Array([this.ownCounterId, newModeValue]);
-                this.ws.sendData("BUF2", updatePacket);
-                if (this.verbose) this.log(`Sent BUF2: ${this.isBuffered ? 'Buffered' : 'Sync'} [Counter: ${this.ownCounterId}]`);
+                this.ws.sendData(this.MSG_BUF, updatePacket);
+                if (this.verbose) this.log(`Sent ${this.MSG_BUF}: ${this.isBuffered ? 'Buffered' : 'Sync'} [Counter: ${this.ownCounterId}]`);
                 this.ownCounterId = (this.ownCounterId + 1) % 256;
                 currentMode = this.isBuffered;
             } else {
-                // Peer's turn to decide - wait for their NEW BUF2
+                // Peer's turn to decide - wait for their NEW buffered message
                 this.log("Waiting for other player's decision...");
 
-                // Clear cached BUF2 so we wait for a new one
-                if (this.ws.recvDict && this.ws.recvDict["BUF2"]) {
-                    delete this.ws.recvDict["BUF2"];
+                // Clear cached buffered message so we wait for a new one
+                if (this.ws.recvDict && this.ws.recvDict[this.MSG_BUF]) {
+                    delete this.ws.recvDict[this.MSG_BUF];
                 }
 
                 // Poll until we get peer's response
@@ -2109,8 +2119,8 @@ export class GSCTrading extends TradingProtocol {
 
                 while (!gotResponse && !this.stopTrade && (Date.now() - startTime < timeout)) {
                     await this.sleep(500);
-                    this.ws.sendGetData("BUF2");
-                    const updatedBuf = await this.waitForMessage("BUF2", 2000);
+                    this.ws.sendGetData(this.MSG_BUF);
+                    const updatedBuf = await this.waitForMessage(this.MSG_BUF, 2000);
 
                     if (updatedBuf && updatedBuf.length >= 2) {
                         const newPeerCounter = updatedBuf[0];
@@ -2136,6 +2146,7 @@ export class GSCTrading extends TradingProtocol {
         this.log(`Final mode: ${this.isBuffered ? 'Buffered' : 'Sync'}`);
     }
 
+
     async startTrade() {
         // First, enter the room (only done once at the very beginning)
         this.log(`Starting GSC Trade Protocol (${this.tradeType} mode, ${this.isBuffered ? 'buffered' : 'sync'})...`);
@@ -2154,18 +2165,18 @@ export class GSCTrading extends TradingProtocol {
         this.ownBlankTrade = true;
         this.otherBlankTrade = true;
 
-        // === CRITICAL: Pre-populate BUF2 response for background negotiator ===
-        // GSCBufferedNegotiator sends GET BUF2 immediately upon connection.
+        // === CRITICAL: Pre-populate buffered response for background negotiator ===
+        // GSCBufferedNegotiator sends GET immediately upon connection.
         // We MUST have data ready to respond, otherwise ref impl hangs waiting for it.
         if (this.ownCounterId === undefined) {
             this.ownCounterId = Math.floor(Math.random() * 256);
         }
         const ourMode = this.isBuffered ? 0x85 : 0x12; // 0x85 = Buffered, 0x12 = Sync
         const bufPacket = new Uint8Array([this.ownCounterId, ourMode]);
-        this.ws.sendDict["BUF2"] = bufPacket; // Pre-populate for GET requests
-        if (this.verbose) this.log(`Pre-populated BUF2 for negotiator: ${this.isBuffered ? 'Buffered' : 'Sync'} [Counter: ${this.ownCounterId}]`);        // === PROTOCOL BEHAVIOR: Start BUF2 negotiation IMMEDIATELY (before enter_room) ===
+        this.ws.sendDict[this.MSG_BUF] = bufPacket; // Pre-populate for GET requests
+        if (this.verbose) this.log(`Pre-populated ${this.MSG_BUF} for negotiator: ${this.isBuffered ? 'Buffered' : 'Sync'} [Counter: ${this.ownCounterId}]`);        // === PROTOCOL BEHAVIOR: Start buffered negotiation IMMEDIATELY (before enter_room) ===
         // GSCBufferedNegotiator.start() runs in background from the start
-        // It sends BUF2 immediately while the main thread continues to enter_room and sit_to_table
+        // It sends buffered data immediately while the main thread continues to enter_room and sit_to_table
         // We'll create a background promise that runs negotiation in parallel
         let negotiationPromise = null;
 
@@ -2174,25 +2185,26 @@ export class GSCTrading extends TradingProtocol {
             if (this.ownCounterId === undefined) {
                 this.ownCounterId = Math.floor(Math.random() * 256);
             }
-            // Send BUF2 IMMEDIATELY (like background thread)
+            // Send buffered data IMMEDIATELY (like background thread)
             const ourMode = this.isBuffered ? 0x85 : 0x12;
             const bufPacket = new Uint8Array([this.ownCounterId, ourMode]);
-            this.ws.sendData("BUF2", bufPacket);
-            if (this.verbose) this.log(`Sent BUF2 early (like ref impl): ${this.isBuffered ? 'Buffered (0x85)' : 'Sync (0x12)'} [Counter: ${this.ownCounterId}]`);
+            this.ws.sendData(this.MSG_BUF, bufPacket);
+            if (this.verbose) this.log(`Sent ${this.MSG_BUF} early (like ref impl): ${this.isBuffered ? 'Buffered (0x85)' : 'Sync (0x12)'} [Counter: ${this.ownCounterId}]`);
             this.ownCounterId = (this.ownCounterId + 1) % 256;
 
             // === START NEGOTIATION IN BACKGROUND (like thread) ===
             // This promise runs in parallel while user sits at table
             this.log("Starting background negotiation (like thread)...");
             negotiationPromise = (async () => {
-                // Wait for peer to connect (polls for their BUF2)
+                // Wait for peer to connect (polls for their buffered data)
                 await this.waitForPeer();
-                // Complete the full NEG2 negotiation
+                // Complete the full negotiation
                 await this.completeBufferedNegotiation();
                 this.initialNegotiationDone = true;
                 return this.isBuffered;
             })();
         }
+
 
         // Enter room - don't wait for peer (like ref impl does)
         await this.enterRoom();
