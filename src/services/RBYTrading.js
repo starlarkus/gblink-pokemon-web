@@ -622,6 +622,8 @@ export class RBYTrading extends GSCTrading {
                 this.log(`Pool: Server auto-selected: 0x${serverChoice.toString(16)}`);
             } else {
                 // Link trade: GET CHC1 from peer to receive their actual selection
+                // IMPORTANT: Clear any stale CHC1 from previous trade first!
+                delete this.ws.recvDict[this.MSG_CHC];
                 this.log("Link: Waiting for peer's Pokemon selection (CHC1)...");
                 this.ws.sendGetData(this.MSG_CHC);
                 const peerChoiceData = await this.waitForMessage(this.MSG_CHC, 15000);
@@ -651,6 +653,8 @@ export class RBYTrading extends GSCTrading {
             this.tradeCounter = (this.tradeCounter + 1) & 0xFF;
 
             // Get server/peer accept response
+            // IMPORTANT: Clear any stale ACP1 from previous trade first!
+            delete this.ws.recvDict[this.MSG_ACP];
             this.ws.sendGetData(this.MSG_ACP);
             const serverAcceptData = await this.waitForMessage(this.MSG_ACP, 5000);
 
@@ -702,6 +706,8 @@ export class RBYTrading extends GSCTrading {
                     this.ws.sendData(this.MSG_SUC, new Uint8Array([suc1Counter, 0x61]));
                     this.tradeCounter = (this.tradeCounter + 1) & 0xFF;
 
+                    // Clear stale SUC1 before waiting for new one
+                    delete this.ws.recvDict[this.MSG_SUC];
                     this.ws.sendGetData(this.MSG_SUC);
                     await this.waitForMessage(this.MSG_SUC, 5000);
 
