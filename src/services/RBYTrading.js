@@ -732,11 +732,22 @@ export class RBYTrading extends GSCTrading {
                         this.log("RBY Pool: Trade complete. Returning to trade room...");
                         break;
                     } else {
-                        // Link trade: Keep bufferedOtherData cached for subsequent trades
-                        // The ghost trade only happens on the first trade when bufferedOtherData is null
-                        // On subsequent trades, we reuse the cached peer party data
-                        // This prevents repeating the ghost trade phase every time
-                        this.log("Link: Trade complete. Cached data preserved for next trade.");
+                        // Link trade: Update bufferedOtherData with the trade result
+                        // Like Python's trade_mon(), we need to:
+                        // 1. Put the Pokemon we gave to them at the end of their party
+                        // This ensures the next trade shows correct party state
+
+                        const ourTradedIndex = choice - this.FIRST_TRADE_INDEX;
+                        const peerTradedIndex = serverChoice - this.FIRST_TRADE_INDEX;
+
+                        this.log(`Link: Updating cached peer data (we gave slot ${ourTradedIndex}, they gave slot ${peerTradedIndex})`);
+
+                        // Update peer's party: put OUR traded Pokemon at the end of their party
+                        if (this.bufferedOtherData && this.bufferedOtherData[1]) {
+                            this.updatePeerPartyAfterTrade(ourTradedIndex, peerTradedIndex);
+                        }
+
+                        this.log("Link: Trade complete. Cached data updated for next trade.");
                         break;
                     }
                 }
@@ -746,6 +757,93 @@ export class RBYTrading extends GSCTrading {
         }
 
         this.log("RBY: Trade menu loop ended.");
+    }
+
+    /**
+     * Update peer's cached party data after a successful trade.
+     * Like Python's trade_mon(), moves their traded Pokemon to the end
+     * and replaces it with our Pokemon.
+     * 
+     * @param {number} ourIndex - Index of Pokemon we traded to them
+     * @param {number} peerIndex - Index of Pokemon they traded to us
+     */
+    updatePeerPartyAfterTrade(ourIndex, peerIndex) {
+        const peerSection1 = this.bufferedOtherData[1];
+        if (!peerSection1 || !this.gbPartyData) return;
+
+        // Get party size from peer's data (byte at trading_party_info_pos)
+        const partySize = peerSection1[RBYUtils.trading_party_info_pos];
+        if (partySize === 0 || partySize > 6) {
+            this.log(`Link: Invalid peer party size: ${partySize}`);
+            return;
+        }
+
+        const lastIndex = partySize - 1;
+        const POKEMON_LEN = RBYUtils.trading_pokemon_length; // 44 bytes
+        const NAME_LEN = RBYUtils.trading_name_length;       // 11 bytes
+
+        // Step 1: Reorder peer's party - move their traded Pokemon to end
+        // (Shift Pokemon after peerIndex down by 1)
+        if (peerIndex < lastIndex) {
+            // Move Pokemon data
+            for (let i = peerIndex; i < lastIndex; i++) {
+                const srcStart = RBYUtils.trading_pokemon_pos + (i + 1) * POKEMON_LEN;
+                const dstStart = RBYUtils.trading_pokemon_pos + i * POKEMON_LEN;
+                for (let j = 0; j < POKEMON_LEN; j++) {
+                    peerSection1[dstStart + j] = peerSection1[srcStart + j];
+                }
+            }
+            // Move OT names
+            for (let i = peerIndex; i < lastIndex; i++) {
+                const srcStart = RBYUtils.trading_pokemon_ot_pos + (i + 1) * NAME_LEN;
+                const dstStart = RBYUtils.trading_pokemon_ot_pos + i * NAME_LEN;
+                for (let j = 0; j < NAME_LEN; j++) {
+                    peerSection1[dstStart + j] = peerSection1[srcStart + j];
+                }
+            }
+            // Move nicknames
+            for (let i = peerIndex; i < lastIndex; i++) {
+                const srcStart = RBYUtils.trading_pokemon_nickname_pos + (i + 1) * NAME_LEN;
+                const dstStart = RBYUtils.trading_pokemon_nickname_pos + i * NAME_LEN;
+                for (let j = 0; j < NAME_LEN; j++) {
+                    peerSection1[dstStart + j] = peerSection1[srcStart + j];
+                }
+            }
+            // Move party info IDs (species list after count)
+            for (let i = peerIndex; i < lastIndex; i++) {
+                peerSection1[RBYUtils.trading_party_info_pos + 1 + i] =
+                    peerSection1[RBYUtils.trading_party_info_pos + 1 + i + 1];
+            }
+        }
+
+        // Step 2: Copy OUR traded Pokemon to the END of peer's party
+        // Get our Pokemon data from gbPartyData (what we collected from our Game Boy)
+        const ourPokemonStart = RBYUtils.trading_pokemon_pos + ourIndex * POKEMON_LEN;
+        const ourOtStart = RBYUtils.trading_pokemon_ot_pos + ourIndex * NAME_LEN;
+        const ourNickStart = RBYUtils.trading_pokemon_nickname_pos + ourIndex * NAME_LEN;
+
+        const peerLastPokemonStart = RBYUtils.trading_pokemon_pos + lastIndex * POKEMON_LEN;
+        const peerLastOtStart = RBYUtils.trading_pokemon_ot_pos + lastIndex * NAME_LEN;
+        const peerLastNickStart = RBYUtils.trading_pokemon_nickname_pos + lastIndex * NAME_LEN;
+
+        // Copy Pokemon data
+        for (let j = 0; j < POKEMON_LEN; j++) {
+            peerSection1[peerLastPokemonStart + j] = this.gbPartyData[ourPokemonStart + j] ?? 0;
+        }
+        // Copy OT name
+        for (let j = 0; j < NAME_LEN; j++) {
+            peerSection1[peerLastOtStart + j] = this.gbPartyData[ourOtStart + j] ?? 0;
+        }
+        // Copy nickname
+        for (let j = 0; j < NAME_LEN; j++) {
+            peerSection1[peerLastNickStart + j] = this.gbPartyData[ourNickStart + j] ?? 0;
+        }
+
+        // Copy species to party info
+        const ourSpecies = this.gbPartyData[RBYUtils.trading_party_info_pos + 1 + ourIndex];
+        peerSection1[RBYUtils.trading_party_info_pos + 1 + lastIndex] = ourSpecies;
+
+        this.log(`Link: Updated peer party - our Pokemon (slot ${ourIndex}) now at end of their party (slot ${lastIndex})`);
     }
 
     /**
