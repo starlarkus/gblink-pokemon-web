@@ -245,6 +245,7 @@ export class RBYTrading extends GSCTrading {
     get MSG_VEC() { return "VEC1"; }
     get MSG_VES() { return "VES1"; }
     get MSG_RAN() { return "RAN1"; }
+    get MSG_ASK() { return "ASK1"; }
 
     // ==================== OVERRIDE METHODS ====================
 

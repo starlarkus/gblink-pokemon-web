@@ -117,10 +117,12 @@ export class GSCTrading extends TradingProtocol {
     }
 
     // ==================== MESSAGE TAG GETTERS ====================
-    // Override in subclasses for Gen1 (BUF1/NEG1/SNG1) vs Gen2 (BUF2/NEG2/SNG2)
+    // Override in subclasses for Gen1 vs Gen2 message tags
     get MSG_BUF() { return "BUF2"; }
     get MSG_NEG() { return "NEG2"; }
     get MSG_SNG() { return "SNG2"; }
+    get MSG_MVS() { return "MVS2"; }
+    get MSG_ASK() { return "ASK2"; }
 
     /**
      * Check if a party has any Pokemon holding mail.
@@ -831,16 +833,16 @@ export class GSCTrading extends TradingProtocol {
      */
     async receiveMVS2() {
         // Clear any stale MVS2 data first
-        delete this.ws.recvDict["MVS2"];
+        delete this.ws.recvDict[this.MSG_MVS];
 
         if (this.verbose) this.log(`[DEBUG] receiveMVS2: Starting. Expected peerCounterId=${this.peerCounterId}`);
 
         // Request MVS2 from server
-        this.ws.sendGetData("MVS2");
+        this.ws.sendGetData(this.MSG_MVS);
 
         const maxRetries = 500; // 500 * 100ms = 50 seconds
         for (let i = 0; i < maxRetries && !this.stopTrade; i++) {
-            const mvs2Data = this.ws.recvDict["MVS2"];
+            const mvs2Data = this.ws.recvDict[this.MSG_MVS];
             if (mvs2Data && mvs2Data.length >= 9) {
                 const counter = mvs2Data[0];
 
@@ -860,8 +862,8 @@ export class GSCTrading extends TradingProtocol {
                         this.peerCounterId = counter;
                     } else {
                         if (this.verbose) this.log(`[DEBUG] Rejecting stale MVS2: counter=${counter}, expected=${this.peerCounterId}`);
-                        delete this.ws.recvDict["MVS2"];
-                        this.ws.sendGetData("MVS2");
+                        delete this.ws.recvDict[this.MSG_MVS];
+                        this.ws.sendGetData(this.MSG_MVS);
                         await this.sleep(100);
                         continue;
                     }
@@ -908,7 +910,7 @@ export class GSCTrading extends TradingProtocol {
                 }
 
                 // Clear the received data
-                delete this.ws.recvDict["MVS2"];
+                delete this.ws.recvDict[this.MSG_MVS];
                 return true;
             }
 
@@ -917,7 +919,7 @@ export class GSCTrading extends TradingProtocol {
             }
 
             await this.sleep(100);
-            this.ws.sendGetData("MVS2");
+            this.ws.sendGetData(this.MSG_MVS);
         }
 
         this.log("[WARN] Timeout waiting for MVS2 - assuming peer sent it anyway");
@@ -968,7 +970,7 @@ export class GSCTrading extends TradingProtocol {
         mvs2Payload[0] = this.ownCounterId;
         mvs2Payload.set(moveData, 1);
 
-        this.ws.sendData("MVS2", mvs2Payload);
+        this.ws.sendData(this.MSG_MVS, mvs2Payload);
         this.log(`Sent MVS2 (Counter: ${this.ownCounterId}): moves=[${moveData.slice(0, 4).join(',')}] pp=[${moveData.slice(4, 8).join(',')}]`);
 
         // Increment our counter
@@ -1588,14 +1590,14 @@ export class GSCTrading extends TradingProtocol {
                 // Send our need_data to peer (tell them if they need to send us MVS2)
                 const ourNeedDataValue = weNeedMVS2FromPeer ? NEED_DATA_VALUE : NOT_NEED_DATA_VALUE;
                 const ask2Payload = new Uint8Array([this.ownCounterId, ourNeedDataValue]);
-                this.ws.sendData("ASK2", ask2Payload);
+                this.ws.sendData(this.MSG_ASK, ask2Payload);
                 this.ownCounterId = (this.ownCounterId + 1) % 256;
-                this.log(`Sent ASK2 (need_data): 0x${ourNeedDataValue.toString(16)}`);
+                this.log(`Sent ${this.MSG_ASK} (need_data): 0x${ourNeedDataValue.toString(16)}`);
 
-                // Get peer's ASK2 response (they tell us if we need to send them MVS2)
+                // Get peer's ASK response (they tell us if we need to send them MVS)
                 await this.sleep(300);
-                this.ws.sendGetData("ASK2");
-                const peerAsk2 = await this.waitForMessage("ASK2");
+                this.ws.sendGetData(this.MSG_ASK);
+                const peerAsk2 = await this.waitForMessage(this.MSG_ASK);
                 if (peerAsk2 && peerAsk2.length >= 2) {
                     const peerCounter = peerAsk2[0];
                     const peerValue = peerAsk2[1];
@@ -1605,7 +1607,7 @@ export class GSCTrading extends TradingProtocol {
                     this.ownBlankTrade = (peerValue === NEED_DATA_VALUE);
                     this.peerCounterId = (peerCounter + 1) % 256;
                 } else {
-                    this.log("[WARN] Failed to receive ASK2, using calculated value");
+                    this.log(`[WARN] Failed to receive ${this.MSG_ASK}, using calculated value`);
                     this.ownBlankTrade = peerNeedsMVS2;
                 }
 
@@ -2322,12 +2324,12 @@ export class GSCTrading extends TradingProtocol {
 
         // === CLEAR STALE CACHED MESSAGES FROM PREVIOUS TRADE ===
         // Like buffered mode, we must clear cached messages to avoid counter sync issues
-        // Old CHC2, ACP2, ASK2, SUC2, MVS2 from first trade would have wrong counters
+        // Old CHC, ACP, ASK, SUC, MVS from first trade would have wrong counters
         delete this.ws.recvDict["CHC2"];
         delete this.ws.recvDict["ACP2"];
-        delete this.ws.recvDict["ASK2"];
+        delete this.ws.recvDict[this.MSG_ASK];
         delete this.ws.recvDict["SUC2"];
-        delete this.ws.recvDict["MVS2"];
+        delete this.ws.recvDict[this.MSG_MVS];
         delete this.ws.recvDict[this.MSG_SNG];
         if (this.verbose) this.log("[DEBUG] Cleared stale cached messages for subsequent trade");
 
