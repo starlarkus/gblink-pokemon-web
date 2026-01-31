@@ -99,15 +99,60 @@ export class RBYUtils extends GSCUtils {
 
     // ==================== RBY TRADING DATA CREATION ====================
 
+    // Default party data for ghost trades (loaded from base.bin)
+    static defaultPartyData = null;
+
     /**
      * Create default trading data for RBY (3 sections, no mail)
+     * Uses cached defaultPartyData if loaded, otherwise creates empty sections.
      */
     static createDefaultTradingData() {
+        // If we have cached default party data, use it
+        if (RBYUtils.defaultPartyData) {
+            return {
+                section1: new Uint8Array(RBYUtils.defaultPartyData.section1),
+                section2: new Uint8Array(RBYUtils.defaultPartyData.section2)
+            };
+        }
+
+        // Fallback to empty sections (will cause garbled display)
+        console.warn('[RBYUtils] No default party data loaded - ghost trade may show garbled data');
         return {
             section1: new Uint8Array(RBYUtils.SECTION_LENGTHS[1]).fill(0),
             section2: new Uint8Array(RBYUtils.SECTION_LENGTHS[2]).fill(0)
             // No section3 (mail) in Gen 1
         };
+    }
+
+    /**
+     * Load default party data from base.bin for ghost trades.
+     * This is the RBY equivalent of GSCUtils.loadDefaultPartyData().
+     * Uses the same base.bin file as loadBasePoolData().
+     */
+    static async loadDefaultPartyData() {
+        // If already loaded via loadBasePoolData, use that
+        if (this.basePoolData) {
+            this.defaultPartyData = {
+                section1: new Uint8Array(this.basePoolData.section1),
+                section2: new Uint8Array(this.basePoolData.section2)
+            };
+            console.log('[RBYUtils] Using basePoolData as defaultPartyData');
+            return true;
+        }
+
+        // Otherwise load base.bin
+        const loaded = await this.loadBasePoolData();
+        if (loaded && this.basePoolData) {
+            this.defaultPartyData = {
+                section1: new Uint8Array(this.basePoolData.section1),
+                section2: new Uint8Array(this.basePoolData.section2)
+            };
+            console.log('[RBYUtils] Loaded defaultPartyData from base.bin');
+            return true;
+        }
+
+        console.warn('[RBYUtils] Failed to load default party data');
+        return false;
     }
 
     // Base pool data (loaded by loadBasePoolData)

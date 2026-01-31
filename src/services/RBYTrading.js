@@ -149,8 +149,8 @@ export class RBYTrading extends GSCTrading {
 
         // Load default party data for ghost trades in buffered mode
         if (this.isBuffered && !RBYUtils.defaultPartyData) {
-            // RBY uses simpler default data
             this.log("[RBY] Loading default party data for ghost trades...");
+            await RBYUtils.loadDefaultPartyData();
         }
 
         // Initialize blank trade flags
