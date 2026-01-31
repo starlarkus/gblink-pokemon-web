@@ -117,9 +117,10 @@ export class GSCTrading extends TradingProtocol {
     }
 
     // ==================== MESSAGE TAG GETTERS ====================
-    // Override in subclasses for Gen1 (BUF1/NEG1) vs Gen2 (BUF2/NEG2)
+    // Override in subclasses for Gen1 (BUF1/NEG1/SNG1) vs Gen2 (BUF2/NEG2/SNG2)
     get MSG_BUF() { return "BUF2"; }
     get MSG_NEG() { return "NEG2"; }
+    get MSG_SNG() { return "SNG2"; }
 
     /**
      * Check if a party has any Pokemon holding mail.
@@ -560,11 +561,11 @@ export class GSCTrading extends TradingProtocol {
             this.otherBlankTrade = true;
             if (this.verbose) this.log("[DEBUG] Reset blank trade flags to true before entering trade menu");
 
-            // Clean up stale SNG2 data from section exchange before entering trade menu
+            // Clean up stale SNG data from section exchange before entering trade menu
             // This prevents leftover sync data from confusing the trade menu logic
             if (!this.isBuffered) {
-                delete this.ws.recvDict["SNG2"];
-                if (this.verbose) this.log("[DEBUG] Cleared stale SNG2 data before trade menu");
+                delete this.ws.recvDict[this.MSG_SNG];
+                if (this.verbose) this.log(`[DEBUG] Cleared stale ${this.MSG_SNG} data before trade menu`);
 
                 // In sync mode, reset peerCounterId to null
                 // The BUF2 counters are NOT used for MVS2/CHC2 exchange in sync mode.
@@ -2327,7 +2328,7 @@ export class GSCTrading extends TradingProtocol {
         delete this.ws.recvDict["ASK2"];
         delete this.ws.recvDict["SUC2"];
         delete this.ws.recvDict["MVS2"];
-        delete this.ws.recvDict["SNG2"];
+        delete this.ws.recvDict[this.MSG_SNG];
         if (this.verbose) this.log("[DEBUG] Cleared stale cached messages for subsequent trade");
 
         if (!this.isLinkTrade) {
@@ -2616,7 +2617,7 @@ export class GSCTrading extends TradingProtocol {
      * Returns parsed packet or null if not available.
      */
     async getTradeData() {
-        const data = this.ws.recvDict["SNG2"];
+        const data = this.ws.recvDict[this.MSG_SNG];
         if (!data) return null;
 
         // Auto-detect protocol from packet size
@@ -2654,8 +2655,8 @@ export class GSCTrading extends TradingProtocol {
             ];
             packet = this.writeEntireDataOld(oldBuf);
         }
-        this.ws.sendData("SNG2", packet);
-        this.ws.sendDict["SNG2"] = packet;
+        this.ws.sendData(this.MSG_SNG, packet);
+        this.ws.sendDict[this.MSG_SNG] = packet;
     }
 
     /**
@@ -2703,7 +2704,7 @@ export class GSCTrading extends TradingProtocol {
             // Request peer data periodically to recover from packet loss
             // ref impl only sends the sync packet once, so we must ask for it if lost
             if (Date.now() - lastRequestTime > 500) {
-                this.ws.sendGetData("SNG2");
+                this.ws.sendGetData(this.MSG_SNG);
                 lastRequestTime = Date.now();
             }
 
