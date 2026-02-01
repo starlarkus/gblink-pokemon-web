@@ -394,7 +394,9 @@ export class AppUI {
             }
 
             if (tradeType === "pool") {
-                url += `/pool${gen}`;
+                // Time Capsule uses Gen 1 endpoints
+                const serverGen = this.isTimeCapsule ? "1" : gen;
+                url += `/pool${serverGen}`;
             } else {
                 let roomCode = this.elements.roomCode.value.trim();
                 if (!/^\d{1,5}$/.test(roomCode)) {
@@ -402,7 +404,9 @@ export class AppUI {
                     return false;
                 }
                 roomCode = roomCode.padStart(5, '0');
-                url += `/link${gen}/${roomCode}`;
+                // Time Capsule uses Gen 1 endpoints
+                const serverGen = this.isTimeCapsule ? "1" : gen;
+                url += `/link${serverGen}/${roomCode}`;
             }
 
             this.log(`Connecting to server at ${url}...`);
@@ -480,24 +484,42 @@ export class AppUI {
                 }
             );
         } else if (gen === "2") {
-            // Gen 2 (with optional Time Capsule mode)
-            this.protocol = new GSCTrading(
-                this.usb,
-                this.ws,
-                (msg) => this.log(msg),
-                tradeType,
-                isBuffered,
-                doSanityChecks,
-                {
-                    isJapanese: this.settings.get('isJapanese'),
-                    verbose: this.settings.get('verbose'),
-                    crashOnSyncDrop: this.settings.get('crashOnSyncDrop'),
-                    maxLevel: this.settings.get('maxLevel'),
-                    convertToEggs: this.settings.get('convertToEggs'),
-                    timeCapsule: this.isTimeCapsule,
-                    negotiationPrompt: (peerMode) => this.showNegotiationPrompt(peerMode)
-                }
-            );
+            // Gen 2 - but Time Capsule uses Gen 1 protocol
+            if (this.isTimeCapsule) {
+                this.log('Time Capsule mode: Using Gen 1 protocol');
+                this.protocol = new RBYTrading(
+                    this.usb,
+                    this.ws,
+                    (msg) => this.log(msg),
+                    tradeType,
+                    isBuffered,
+                    doSanityChecks,
+                    {
+                        isJapanese: this.settings.get('isJapanese'),
+                        verbose: this.settings.get('verbose'),
+                        maxLevel: this.settings.get('maxLevel'),
+                        crashOnSyncDrop: this.settings.get('crashOnSyncDrop'),
+                        negotiationPrompt: (peerMode) => this.showNegotiationPrompt(peerMode)
+                    }
+                );
+            } else {
+                this.protocol = new GSCTrading(
+                    this.usb,
+                    this.ws,
+                    (msg) => this.log(msg),
+                    tradeType,
+                    isBuffered,
+                    doSanityChecks,
+                    {
+                        isJapanese: this.settings.get('isJapanese'),
+                        verbose: this.settings.get('verbose'),
+                        crashOnSyncDrop: this.settings.get('crashOnSyncDrop'),
+                        maxLevel: this.settings.get('maxLevel'),
+                        convertToEggs: this.settings.get('convertToEggs'),
+                        negotiationPrompt: (peerMode) => this.showNegotiationPrompt(peerMode)
+                    }
+                );
+            }
         } else if (gen === "3") {
             // Gen 3 trading requires multiboot first
             this.protocol = new RSESPTrading(
