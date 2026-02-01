@@ -66,6 +66,7 @@ export class AppUI {
         this.selectedGen = null;
         this.selectedTradeType = 'link'; // Default to 2-Player
         this.isTimeCapsule = false;
+        this.isTradeActive = false; // Track if trade is currently running
 
         this.attachListeners();
         this.loadSettingsToUI();
@@ -436,6 +437,12 @@ export class AppUI {
     // === Trading ===
 
     async startTrade() {
+        // If trade is active, this acts as stop button
+        if (this.isTradeActive) {
+            await this.stopTrade();
+            return;
+        }
+
         this.elements.btnStartTrade.disabled = true;
 
         const connected = await this.connectServer();
@@ -443,6 +450,11 @@ export class AppUI {
             this.elements.btnStartTrade.disabled = false;
             return;
         }
+
+        // Switch button to Stop mode
+        this.isTradeActive = true;
+        this.elements.btnStartTrade.textContent = 'Stop Trade';
+        this.elements.btnStartTrade.disabled = false;
 
         const gen = this.selectedGen;
         const tradeType = this.selectedTradeType;
@@ -505,7 +517,40 @@ export class AppUI {
             await this.protocol.startTrade();
         } catch (error) {
             this.log(`Trade error: ${error}`);
-            this.elements.btnStartTrade.disabled = false;
+        } finally {
+            // Reset button to Start mode when trade ends
+            this.resetTradeButton();
         }
+    }
+
+    /**
+     * Stop the current trade and clean up connections
+     */
+    async stopTrade() {
+        this.log('Stopping trade...');
+
+        // Stop the protocol if running
+        if (this.protocol) {
+            this.protocol.stopTrade = true;
+        }
+
+        // Disconnect WebSocket
+        if (this.ws && this.ws.isConnected) {
+            this.ws.disconnect();
+        }
+
+        // Reset button
+        this.resetTradeButton();
+
+        this.log('Trade stopped. You can start a new trade.');
+    }
+
+    /**
+     * Reset the Start/Stop Trade button to default state
+     */
+    resetTradeButton() {
+        this.isTradeActive = false;
+        this.elements.btnStartTrade.textContent = 'Start Trade';
+        this.elements.btnStartTrade.disabled = false;
     }
 }

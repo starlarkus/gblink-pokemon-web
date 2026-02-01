@@ -2,6 +2,7 @@
 export class WebSocketClient {
     constructor() {
         this.ws = null;
+        this.url = null;
         this.isConnected = false;
         this.listeners = {}; // Map of type -> callback
         this.sendDict = {}; // Data ready to be sent when requested
@@ -17,6 +18,7 @@ export class WebSocketClient {
 
     connect(url) {
         return new Promise((resolve, reject) => {
+            this.url = url; // Store URL for potential reconnection
             this.ws = new WebSocket(url);
 
             this.ws.onopen = () => {
@@ -47,6 +49,21 @@ export class WebSocketClient {
                 this.processReceivedData(data);
             };
         });
+    }
+
+    /**
+     * Disconnect the WebSocket connection
+     */
+    disconnect() {
+        if (this.ws) {
+            this.ws.close();
+            this.ws = null;
+            this.isConnected = false;
+            // Clear cached data
+            this.sendDict = {};
+            this.recvDict = {};
+            console.log("WebSocket manually disconnected");
+        }
     }
 
     registerListener(type, callback) {

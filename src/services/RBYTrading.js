@@ -814,10 +814,18 @@ export class RBYTrading extends GSCTrading {
                 this.log("RBY: Trade cancelled by player");
                 await this.endTrade(this.STOP_TRADE);
 
-                // For pool trades: clear cached data to get fresh Pokemon on re-entry
+                // For pool trades: reconnect WebSocket to get fresh Pokemon from server
                 if (!this.isLinkTrade) {
                     this.bufferedOtherData = null;
-                    this.log("RBY Pool: Will request new Pokemon on re-entry");
+                    delete this.ws.recvDict[this.MSG_POL];
+
+                    // Reconnect WebSocket to get new Pokemon from pool
+                    this.log("RBY Pool: Reconnecting to get fresh Pokemon...");
+                    const serverUrl = this.ws.url; // Store current URL before disconnect
+                    this.ws.disconnect();
+                    await this.sleep(500); // Brief delay for clean disconnect
+                    await this.ws.connect(serverUrl);
+                    this.log("RBY Pool: Reconnected! Will get new Pokemon on re-entry");
                 }
                 break;
             }

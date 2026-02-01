@@ -1025,6 +1025,20 @@ export class GSCTrading extends TradingProtocol {
                 // ref impl end_trade: Send 0x7F until GB responds 0x7F, then wait for 0
                 await this.endTrade(STOP_TRADE);
                 this.log("End trade handshake complete. Returning to trade room...");
+
+                // For pool trades: reconnect WebSocket to get fresh Pokemon from server
+                if (!this.isLinkTrade) {
+                    this.bufferedOtherData = null;
+                    delete this.ws.recvDict["POL2"];
+
+                    // Reconnect WebSocket to get new Pokemon from pool
+                    this.log("Pool: Reconnecting to get fresh Pokemon...");
+                    const serverUrl = this.ws.url;
+                    this.ws.disconnect();
+                    await this.sleep(500);
+                    await this.ws.connect(serverUrl);
+                    this.log("Pool: Reconnected! Will get new Pokemon on re-entry");
+                }
                 break;
             }
 
