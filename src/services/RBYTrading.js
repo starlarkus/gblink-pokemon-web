@@ -813,6 +813,12 @@ export class RBYTrading extends GSCTrading {
             if (choice === this.STOP_TRADE) {
                 this.log("RBY: Trade cancelled by player");
                 await this.endTrade(this.STOP_TRADE);
+
+                // For pool trades: clear cached data to get fresh Pokemon on re-entry
+                if (!this.isLinkTrade) {
+                    this.bufferedOtherData = null;
+                    this.log("RBY Pool: Will request new Pokemon on re-entry");
+                }
                 break;
             }
 
