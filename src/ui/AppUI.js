@@ -298,6 +298,9 @@ export class AppUI {
         this.log('Starting GBA Multiboot Transfer');
         this.log('═'.repeat(40));
 
+        // GBA multiboot requires 3.3V
+        await this.usb.setVoltage('3v3');
+
         try {
             const response = await fetch('./data/pokemon_gen3_to_genx_mb.gba');
             if (!response.ok) {
@@ -466,6 +469,13 @@ export class AppUI {
         const doSanityChecks = this.settings.get('doSanityChecks');
 
         this.log(`Starting ${tradeType} trade for Gen ${gen} (${isBuffered ? 'buffered' : 'sync'} mode)...`);
+
+        // Set voltage based on generation (only if firmware supports it)
+        if (gen === "3") {
+            await this.usb.setVoltage('3v3');
+        } else {
+            await this.usb.setVoltage('5v');
+        }
 
         if (gen === "1") {
             this.protocol = new RBYTrading(

@@ -1,4 +1,31 @@
 
+function fwVersionAtLeast(version, minMajor, minMinor, minPatch) {
+    if (!version) return false;
+    const parts = version.split('.').map(Number);
+    const [major = 0, minor = 0, patch = 0] = parts;
+    if (major !== minMajor) return major > minMajor;
+    if (minor !== minMinor) return minor > minMinor;
+    return patch >= minPatch;
+}
+
+// Voltage switch magic packets (36 bytes: 32-byte prefix + 4-byte command)
+const VSWITCH_PREFIX = new Uint8Array([
+    0xCA, 0xFE, 0xCA, 0xFE, 0xCA, 0xFE, 0xCA, 0xFE,
+    0xCA, 0xFE, 0xCA, 0xFE, 0xCA, 0xFE, 0xCA, 0xFE,
+    0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF,
+    0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF
+]);
+
+function buildVswitchPacket(suffix) {
+    const packet = new Uint8Array(36);
+    packet.set(VSWITCH_PREFIX);
+    packet.set(new TextEncoder().encode(suffix), 32);
+    return packet;
+}
+
+const VSWITCH_3V3_PACKET = buildVswitchPacket('V3V3');
+const VSWITCH_5V_PACKET = buildVswitchPacket('V5V0');
+
 export class UsbConnection {
     constructor() {
         this.device = null;
@@ -6,6 +33,7 @@ export class UsbConnection {
         this.endpointIn = 0;
         this.endpointOut = 0;
         this.isConnected = false;
+        this.firmwareVersion = null;
     }
 
     async connect() {
@@ -90,6 +118,24 @@ export class UsbConnection {
             });
 
             this.isConnected = true;
+
+            // Read firmware version string (new firmware sends "GBLINK:x.x.x\n" on connect)
+            try {
+                const result = await Promise.race([
+                    this.device.transferIn(this.endpointIn, 64),
+                    new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), 500))
+                ]);
+                if (result.status === 'ok' && result.data && result.data.byteLength > 0) {
+                    const str = new TextDecoder().decode(result.data);
+                    if (str.startsWith('GBLINK:')) {
+                        this.firmwareVersion = str.trim().substring(7);
+                        console.log("Firmware version:", this.firmwareVersion);
+                    }
+                }
+            } catch (e) {
+                console.log("No firmware version (old firmware)");
+            }
+
             console.log("USB Connection established");
             return true;
 
@@ -141,6 +187,21 @@ export class UsbConnection {
         // Ensure bytes is a Uint8Array
         const data = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
         await this.device.transferOut(this.endpointOut, data);
+    }
+
+    async setVoltage(mode) {
+        if (!this.isConnected || !fwVersionAtLeast(this.firmwareVersion, 1, 0, 6)) return false;
+        const packet = mode === '5v' ? VSWITCH_5V_PACKET : VSWITCH_3V3_PACKET;
+        await this.device.transferOut(this.endpointOut, packet);
+        // Read ack byte
+        try {
+            await Promise.race([
+                this.device.transferIn(this.endpointIn, 64),
+                new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), 500))
+            ]);
+        } catch (e) { /* ack timeout is non-fatal */ }
+        console.log(`Voltage switched to ${mode}`);
+        return true;
     }
 
     async readBytesRaw(length = 64, timeoutMs = 100) {
