@@ -7,7 +7,8 @@ This is a work in progress JavaScript-based web application for **PokemonGB_Onli
 - **WebUSB Support**: Connect your Game Boy Link Cable USB adapter directly to Chrome/Edge without installing Python drivers.
 
 - **Gen 1 (Red/Blue/Green/Yellow)**:
-    - Pool trading working
+    - **International Versions**: Fully working (Pool Trade & 2-Player).
+    - **Japanese Versions**: Not tested.
 
 - **Gen 2 Support (Gold/Silver/Crystal)**:
     - **International Versions**: Fully working (Pool Trade & 2-Player).
