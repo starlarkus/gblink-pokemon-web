@@ -26,6 +26,25 @@ function buildVswitchPacket(suffix) {
 const VSWITCH_3V3_PACKET = buildVswitchPacket('V3V3');
 const VSWITCH_5V_PACKET = buildVswitchPacket('V5V0');
 
+// LED magic packet: 32-byte prefix + "LEDS" + R, G, B, on/off = 40 bytes
+const LED_PREFIX = new Uint8Array([
+    0xCA, 0xFE, 0xCA, 0xFE, 0xCA, 0xFE, 0xCA, 0xFE,
+    0xCA, 0xFE, 0xCA, 0xFE, 0xCA, 0xFE, 0xCA, 0xFE,
+    0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF,
+    0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF,
+    0x4C, 0x45, 0x44, 0x53  // "LEDS"
+]);
+
+function buildLedPacket(r, g, b, on) {
+    const packet = new Uint8Array(40);
+    packet.set(LED_PREFIX);
+    packet[36] = r;
+    packet[37] = g;
+    packet[38] = b;
+    packet[39] = on ? 1 : 0;
+    return packet;
+}
+
 export class UsbConnection {
     constructor() {
         this.device = null;
@@ -201,6 +220,19 @@ export class UsbConnection {
             ]);
         } catch (e) { /* ack timeout is non-fatal */ }
         console.log(`Voltage switched to ${mode}`);
+        return true;
+    }
+
+    async setLed(r, g, b, on = true) {
+        if (!this.isConnected || !fwVersionAtLeast(this.firmwareVersion, 1, 0, 6)) return false;
+        const packet = buildLedPacket(r, g, b, on);
+        await this.device.transferOut(this.endpointOut, packet);
+        try {
+            await Promise.race([
+                this.device.transferIn(this.endpointIn, 64),
+                new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), 500))
+            ]);
+        } catch (e) { /* ack timeout is non-fatal */ }
         return true;
     }
 
