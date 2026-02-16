@@ -138,16 +138,20 @@ export class UsbConnection {
 
             this.isConnected = true;
 
-            // Read firmware version string (new firmware sends "GBLINK:x.x.x\n" on connect)
+            // Query firmware version via control transfer (request 0x23)
+            // Old firmware stalls cleanly; new firmware responds with "GBLINK:x.x.x"
             try {
-                const result = await Promise.race([
-                    this.device.transferIn(this.endpointIn, 64),
-                    new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), 500))
-                ]);
+                const result = await this.device.controlTransferIn({
+                    requestType: 'class',
+                    recipient: 'interface',
+                    request: 0x23,
+                    value: 0x00,
+                    index: this.interfaceNumber
+                }, 64);
                 if (result.status === 'ok' && result.data && result.data.byteLength > 0) {
                     const str = new TextDecoder().decode(result.data);
                     if (str.startsWith('GBLINK:')) {
-                        this.firmwareVersion = str.trim().substring(7);
+                        this.firmwareVersion = str.substring(7);
                         console.log("Firmware version:", this.firmwareVersion);
                     }
                 }
