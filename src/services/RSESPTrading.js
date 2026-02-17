@@ -53,6 +53,10 @@ export class RSESPTrading extends TradingProtocol {
         this.other_pokemon = null;
         this.exit_or_new = false;
 
+        // Counter state for WS message sequencing (matches Python send_with_counter/get_with_counter)
+        this.own_id = null;
+        this.other_id = null;
+
         // Base data file paths
         this.base_pool_path = "data/rse/base_pool.bin";
         this.base_no_trade_path = "data/rse/base.bin";
@@ -448,18 +452,30 @@ export class RSESPTrading extends TradingProtocol {
     // ==================== WebSocket Communication ====================
 
     sendWithCounter(tag, data) {
-        this.ws.sendData(tag, data);
+        if (this.own_id === null) {
+            this.own_id = Math.floor(Math.random() * 256);
+        } else {
+            this.own_id = (this.own_id + 1) & 0xFF;
+        }
+        const payload = new Uint8Array([this.own_id, ...data]);
+        this.ws.sendData(tag, payload);
     }
 
     getWithCounter(tag) {
         if (this.ws.recvDict[tag]) {
             const data = this.ws.recvDict[tag];
             delete this.ws.recvDict[tag];
-            // Skip counter byte
-            if (data && data.length > 1) {
+            if (data && data.length >= 1) {
+                const counterId = data[0];
+                if (this.other_id === null) {
+                    this.other_id = counterId;
+                } else if (this.other_id !== counterId) {
+                    return null;
+                }
+                this.other_id = (this.other_id + 1) & 0xFF;
                 return data.slice(1);
             }
-            return data;
+            return null;
         }
         return null;
     }
