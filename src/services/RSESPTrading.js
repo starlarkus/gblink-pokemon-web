@@ -428,6 +428,18 @@ export class RSESPTrading extends TradingProtocol {
         // Reset counter state for new trade round
         this.own_id = null;
         this.other_id = null;
+        // Clear stale counter-based recvDict entries from previous trade
+        // to prevent retransmissions from contaminating the next trade
+        const counterTags = [
+            this.pool_transfer,
+            this.pool_transfer_out,
+            this.choice_transfer,
+            ...this.accept_transfer,
+            ...this.success_transfer,
+        ];
+        for (const tag of counterTags) {
+            delete this.ws.recvDict[tag];
+        }
     }
 
     // ==================== Force Receive Helpers ====================
@@ -767,20 +779,17 @@ export class RSESPTrading extends TradingProtocol {
             // 1. Get pool pokemon from server
             if (this.other_pokemon === null) {
                 this.log("Requesting Pokemon from Pool...");
-                this.ws.sendGetData(this.pool_transfer);
 
-                // Wait for pool response
-                const poolData = await this.waitForMessage(this.pool_transfer);
+                // Use getWithCounter to receive P3SI (matches Python's
+                // get_pool_trading_data → get_with_counter). This is critical
+                // because it sets other_id from the server's counter byte,
+                // allowing subsequent getWithCounter calls to reject stale
+                // data left over from the previous trade.
+                const monDataRaw = await this.forceReceive(
+                    () => this.getWithCounter(this.pool_transfer)
+                );
                 if (this.stopTrade) return;
 
-                if (!poolData || poolData.length <= 2) {
-                    this.log("Pool returned empty response, retrying...");
-                    await this.sleep(1000);
-                    continue;
-                }
-
-                // Parse pool mon (skip counter byte)
-                const monDataRaw = poolData.slice(1);
                 const receivedMon = RSESPUtils.singleMonFromData(this.checks, monDataRaw);
 
                 if (!receivedMon) {
