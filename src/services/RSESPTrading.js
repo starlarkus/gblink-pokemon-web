@@ -10,8 +10,10 @@ export class RSESPTrading extends TradingProtocol {
         this.checks = new RSESPChecks(doSanityChecks);
 
         this.tradeType = tradeType;
+        this.maxLevel = options.maxLevel ?? 100;
+        this.verbose = options.verbose ?? false;
 
-        // Gen 3 Constants matches Python RSESPTrading
+        // Gen 3 message tags (matching Python RSESPTradingClient)
         this.full_transfer = "FL3S";
         this.pool_transfer = "P3SI";
         this.pool_transfer_out = "P3SO";
@@ -28,34 +30,35 @@ export class RSESPTrading extends TradingProtocol {
         this.in_party_trading_flag = 0x80;
         this.asking_data_nybble = 0xC;
 
+        // Trade menu values
         this.trade_offer_start = 0x80;
         this.trade_cancel = 0x8F;
         this.stop_trade_val = (this.trade_cancel << 16);
         this.first_trade_index = (this.trade_offer_start << 16);
+        this.possible_indexes = new Set([0x80, 0x81, 0x82, 0x83, 0x84, 0x85, 0x8F]);
 
         this.base_send_data_start = 1;
         this.base_data_chunk_size = 0xFE;
         this.since_last_useful_limit = 10;
+        this.option_confirmation_threshold = 10;
 
         this.accept_trade = [0xA2, 0xB2];
         this.decline_trade = [0xA1, 0xB1];
+        this.decline_trade_value = [this.decline_trade[0] << 16, this.decline_trade[1] << 16];
         this.success_trade = [0x90, 0x91, 0x92, 0x93, 0x94, 0x95, 0x9C];
         this.failed_trade = 0x9F;
 
-        // 32-bit SPI helper
-        this.exchange32Bit = async (val) => {
-            // Write 4 bytes (Big Endian logic in multboot, but let's check Python)
-            // Python: spi_proto.c implementation usually handles endianness. 
-            // The python script doesn't show the SPI low level, but Multiboot.js used Big Endian for length/CRC??
-            // Wait, Multiboot.js `Spi32` writes: val >>> 24, val >>> 16, ... (Big Endian transmission)
-            // And reads Big Endian.
-            // The GBA hardware Serial is usually Little Endian for data? 
-            // In normal 32-bit mode (SI/SO/SD/SC), it shifts out MSB first usually?
-            // Actually, GBA normal serial is 8-bit or 32-bit.
-            // Multiboot.js uses `Spi32` that sends MSB first.
-            // Let's stick to what Multiboot.js does since it works for Multiboot.
+        // Trading state
+        this.own_pokemon = null;
+        this.other_pokemon = null;
+        this.exit_or_new = false;
 
-            // Multiboot Spi32 implementation reference:
+        // Base data file paths
+        this.base_pool_path = "data/rse/base_pool.bin";
+        this.base_no_trade_path = "data/rse/base.bin";
+
+        // 32-bit SPI exchange
+        this.exchange32Bit = async (val) => {
             const tx = new Uint8Array([
                 (val >>> 24) & 0xFF,
                 (val >>> 16) & 0xFF,
@@ -69,28 +72,26 @@ export class RSESPTrading extends TradingProtocol {
         };
     }
 
+    // ==================== Entry Point ====================
+
     async startTrade() {
         this.log("Starting Gen 3 Trade...");
+
+        // Load RSESPUtils data files
+        await RSESPUtils.load();
 
         if (this.tradeType === 'pool') {
             await this.poolTradeLoop();
         } else {
-            this.log("Only Pool Trading is supported for Gen 3 currently.");
+            await this.linkTradeLoop();
         }
     }
 
-    // === Low Level Protocol Helpers (Ported from Python) ===
+    // ==================== Low-Level Protocol Helpers ====================
 
     swapByte(data) {
-        // Python swap_byte seems to just wrap the exchange.
-        // But wait, the Python `swap_byte` in `rse_sp_trading.py` calls `self.connection.exchange_32_bit(data)`?
-        // Actually `GSCTrading` base class has `swap_byte` which does 8-bit.
-        // `RSESPTrading` overrides `swap_trade_setup_data`, etc. to working with 32-bit logic.
-        // We will assume `exchange32Bit` is the primitive.
-        return this.exchange32Bit(data);
+        return this.exchange32Bit(data >>> 0);
     }
-
-    // ... Utility functions for packing/unpacking 32-bit Control/Data packets ...
 
     getBytesFromPos(index) {
         let base_pos = index & 0xFFF;
@@ -120,9 +121,6 @@ export class RSESPTrading extends TradingProtocol {
         data |= (this.sending_data_control_flag << 24);
         data |= (this.getBytesFromPos(index) << 16);
         data |= (next & 0xFFFF);
-
-        // Need to handle signed integers behavior in JS? bitwise ops are 32-bit signed.
-        // >>> 0 ensures unsigned.
         data = data >>> 0;
 
         const received = await this.swapByte(data);
@@ -134,7 +132,6 @@ export class RSESPTrading extends TradingProtocol {
         data |= ((this.not_done_control_flag | this.asking_data_nybble) << 24);
         data |= (start & 0xFFF);
         data |= ((end & 0xFFF) << 12);
-
         data = data >>> 0;
 
         const received = await this.swapByte(data);
@@ -190,7 +187,6 @@ export class RSESPTrading extends TradingProtocol {
     }
 
     async swapTradeDataDump() {
-        // (done | in_party) << 24
         let data = ((this.done_control_flag | this.in_party_trading_flag) << 24) >>> 0;
         const received = await this.swapByte(data);
         return this.interpretInDataTradeGen3(received);
@@ -217,11 +213,11 @@ export class RSESPTrading extends TradingProtocol {
     }
 
     interpretInDataTradeGen3(data) {
-        if (!data) return null;
+        if (!data && data !== 0) return null;
         let next = data & 0xFFFFFF;
         let control_byte = (data >>> 24) & 0xFF;
 
-        if (control_byte !== (this.in_party_trading_flag | this.done_control_flag)) {
+        if (control_byte !== ((this.in_party_trading_flag | this.done_control_flag) & 0xFF)) {
             return null;
         }
         return next;
@@ -235,32 +231,31 @@ export class RSESPTrading extends TradingProtocol {
 
         while (i < completed_data.length) {
             let k = i;
-            // Find next completed block
-            while (k < completed_data.length && !completed_data[k]) {
+            for (let l = i; l < completed_data.length; l++) {
+                if (completed_data[l]) break;
                 k++;
             }
-            // k is now the index of the first completed block after i, or length
-            if (k - i > max_size) {
+            if ((k - i) > max_size) {
                 max_size = k - i;
                 max_start = i;
                 max_end = k;
             }
-            // Skip completed blocks
-            while (k < completed_data.length && completed_data[k]) {
-                k++;
+            if (k !== i) {
+                i = k;
+            } else {
+                i++;
             }
-            i = k;
         }
         return [max_start, max_end];
     }
 
-    // === Data Exchange Section ===
+    // ==================== Data Exchange ====================
 
     async readSection(sendData) {
         const length = this.special_sections_len[0];
         const numBlocks = length / 2;
         const completedData = new Array(numBlocks).fill(false);
-        const buf = new Uint8Array(length);
+        const buf = new Array(length).fill(0);
 
         let numUncompleted = numBlocks;
         let otherPos = 0;
@@ -271,221 +266,600 @@ export class RSESPTrading extends TradingProtocol {
         let transferSuccessful = false;
         let hasAllData = false;
 
-        // Initial sync?
-        // Python: self.sync_with_cable(self.not_done_control_flag|self.asking_data_nybble)
-
-        while (!transferSuccessful) {
+        while (!transferSuccessful && !this.stopTrade) {
+            let res;
             if (sinceLastUseful >= this.since_last_useful_limit && !hasAllData) {
                 const [start, end] = this.findUncompletedRange(completedData);
-                const res = await this.askTradeSetupData(start, end);
-                // Unwrap result
-                next = res.next;
-                // is_valid, etc. are part of res
-                // Update state from Res?
-                // actually askTradeSetupData updates logic is simplified in python,
-                // it just sends the request.
-                // The response handling is uniform.
-                if (res.is_asking) {
-                    otherPos = res.other_pos_gen3;
-                    otherEnd = res.other_end_gen3;
-                }
+                res = await this.askTradeSetupData(start, end);
                 sinceLastUseful = 0;
             } else {
-                let nextToSend = 0;
-                if (sendData && otherPos < otherEnd) {
-                    nextToSend = (sendData[otherPos * 2]) | (sendData[otherPos * 2 + 1] << 8);
+                if (sendData !== null && sendData !== undefined) {
+                    if (otherPos < otherEnd) {
+                        next = (sendData[otherPos * 2]) | (sendData[(otherPos * 2) + 1] << 8);
+                    } else {
+                        next = 0;
+                    }
+                } else {
+                    next = 0;
+                    otherPos = 0;
                 }
-
-                const res = await this.swapTradeSetupData(nextToSend, otherPos, hasAllData);
-                next = res.next;
-                const index = res.position;
-
+                res = await this.swapTradeSetupData(next, otherPos, hasAllData);
                 if (otherPos < otherEnd) {
                     otherPos++;
                 }
                 if (otherPos >= numBlocks) {
                     otherPos = 0;
                 }
+            }
 
-                if (res.is_asking) {
-                    otherPos = res.other_pos_gen3;
-                    otherEnd = res.other_end_gen3;
-                } else if (!(res.is_done && res.is_complete)) {
-                    if (!hasAllData && res.is_valid) {
-                        // Check bounds
-                        if (index < numBlocks) {
-                            buf[index * 2] = next & 0xFF;
-                            buf[index * 2 + 1] = (next >>> 8) & 0xFF;
+            sinceLastUseful++;
 
-                            if (!completedData[index]) {
-                                sinceLastUseful = 0;
-                                completedData[index] = true;
-                                numUncompleted--;
+            if (res.is_asking) {
+                otherPos = res.other_pos_gen3;
+                otherEnd = res.other_end_gen3;
+            } else if (!(res.is_done && res.is_complete)) {
+                if (!hasAllData && res.is_valid) {
+                    const index = res.position;
+                    if (index < numBlocks) {
+                        buf[index * 2] = res.next & 0xFF;
+                        buf[(index * 2) + 1] = (res.next >>> 8) & 0xFF;
 
-                                // Progress log
-                                if (numUncompleted % 50 === 0) {
-                                    this.log(`Transferring: ${length - numUncompleted * 2}/${length}`);
-                                }
+                        if (!completedData[index]) {
+                            sinceLastUseful = 0;
+                            completedData[index] = true;
+                            numUncompleted--;
 
-                                if (numUncompleted === 0) {
-                                    // Verify checksum?
-                                    // Assuming simple checksum for now or just trust
+                            if (numUncompleted % 50 === 0) {
+                                this.log(`Transferring: ${length - numUncompleted * 2}/${length}`);
+                            }
+
+                            if (numUncompleted === 0) {
+                                // Validate checksums
+                                if (RSESPTradingData.areChecksumValid(buf, this.special_sections_len)) {
                                     hasAllData = true;
-                                    if (!sendData) {
+                                    if (sendData === null || sendData === undefined) {
                                         transferSuccessful = true;
                                     }
+                                } else {
+                                    // Checksum failed - reset and retry
+                                    this.logVerbose("Checksum validation failed, retrying transfer...");
+                                    for (let ci = 0; ci < numBlocks; ci++) {
+                                        completedData[ci] = false;
+                                    }
+                                    sinceLastUseful = this.since_last_useful_limit;
+                                    numUncompleted = numBlocks;
                                 }
                             }
                         }
                     }
-                } else {
-                    if (hasAllData) {
-                        transferSuccessful = true;
-                    }
+                }
+            } else {
+                if (hasAllData) {
+                    transferSuccessful = true;
                 }
             }
-            sinceLastUseful++;
+
             await this.sleep(0); // Yield
         }
 
-        return buf;
+        return [buf, sendData];
     }
 
-    // === Pool Logic ===
+    // ==================== Trade Menu Helpers ====================
+
+    async waitForSetOfValues(values) {
+        let found_val = null;
+        let consecutive_reads = 0;
+        while (consecutive_reads < this.option_confirmation_threshold && !this.stopTrade) {
+            const next = await this.swapTradeDataDump();
+            let found = false;
+            if (next !== null) {
+                const command_id = next >>> 16;
+                if (values.has(command_id)) {
+                    if (next === found_val) {
+                        consecutive_reads++;
+                        found = true;
+                    }
+                }
+            }
+            if (!found) {
+                consecutive_reads = 0;
+            }
+            found_val = next;
+        }
+        return found_val;
+    }
+
+    async waitForChoice() {
+        return this.waitForSetOfValues(this.possible_indexes);
+    }
+
+    async waitForAcceptDecline(numAccepted) {
+        return this.waitForSetOfValues(
+            new Set([this.accept_trade[numAccepted], this.decline_trade[numAccepted]])
+        );
+    }
+
+    async waitForSuccess(numSuccess) {
+        return this.waitForSetOfValues(
+            new Set([this.success_trade[numSuccess], this.failed_trade])
+        );
+    }
+
+    isChoiceStop(choice) {
+        return (choice & 0xFF0000) === this.stop_trade_val;
+    }
+
+    isChoiceDecline(choice, numAccepted) {
+        return (choice & 0xFF0000) === this.decline_trade_value[numAccepted];
+    }
+
+    convertChoice(choice) {
+        return (choice - this.first_trade_index) >>> 16;
+    }
+
+    hasFailed(value) {
+        return (value & 0xFF0000) === (this.failed_trade << 16);
+    }
+
+    async sendDataMultipleTimes(fn, in_data) {
+        await fn.call(this, in_data);
+        for (let i = 0; i < this.option_confirmation_threshold; i++) {
+            await fn.call(this, in_data);
+        }
+    }
+
+    async endTrade() {
+        let next = 0;
+        while (next === null || ((next & 0xFF0000) !== this.stop_trade_val)) {
+            next = await this.swapTradeOfferDataPure(0, true);
+            if (this.stopTrade) return;
+        }
+        await this.sendDataMultipleTimes(this.swapTradeOfferDataPure, this.stop_trade_val);
+    }
+
+    resetTrade() {
+        this.own_pokemon = null;
+        this.other_pokemon = null;
+    }
+
+    // ==================== Force Receive Helpers ====================
+
+    async forceReceive(fn) {
+        let received = null;
+        while (received === null && !this.stopTrade) {
+            await this.sleep(10);
+            received = fn();
+            await this.swapByte(0);
+        }
+        return received;
+    }
+
+    async forceReceiveMulti(fn, num) {
+        let received = null;
+        while (received === null && !this.stopTrade) {
+            await this.sleep(10);
+            received = fn(num);
+            await this.swapByte(0);
+        }
+        return received;
+    }
+
+    // ==================== WebSocket Communication ====================
+
+    sendWithCounter(tag, data) {
+        this.ws.sendData(tag, data);
+    }
+
+    getWithCounter(tag) {
+        if (this.ws.recvDict[tag]) {
+            const data = this.ws.recvDict[tag];
+            delete this.ws.recvDict[tag];
+            // Skip counter byte
+            if (data && data.length > 1) {
+                return data.slice(1);
+            }
+            return data;
+        }
+        return null;
+    }
+
+    getThreeBytesOfData(ret) {
+        if (ret !== null && ret !== undefined) {
+            return RSESPUtils.fromNBytesLE(ret, 3);
+        }
+        return null;
+    }
+
+    // Pool-specific WS methods
+    getPoolTradingData() {
+        const mon = this.getWithCounter(this.pool_transfer);
+        if (mon === null) return null;
+
+        if (mon.length <= 1) {
+            this.log("Pool returned failure");
+            return null;
+        }
+
+        // Apply checks to received data
+        const receivedMon = RSESPUtils.singleMonFromData(this.checks, mon);
+        if (receivedMon === null) return null;
+
+        // Insert into pre-baked pool party
+        return this._buildPoolParty(receivedMon[0], receivedMon[1]);
+    }
+
+    async _buildPoolParty(mon, isEgg) {
+        // Load base_pool.bin
+        const baseData = await RSESPUtils.fetchBin(this.base_pool_path);
+        if (!baseData) {
+            this.log("Failed to load base_pool.bin");
+            return null;
+        }
+
+        const party = new RSESPTradingData(baseData, null, false);
+        party.pokemon.push(mon);
+
+        // Handle max level
+        if (mon.getLevel() > this.maxLevel) {
+            mon.setLevel(this.maxLevel);
+        }
+
+        // Set party species info
+        if (!isEgg) {
+            party.partyInfo.total = 1;
+        }
+
+        return party;
+    }
+
+    sendPoolTradingDataOut(choice) {
+        const index = this.convertChoice(choice);
+        let ownMon = [];
+        if (!this.isChoiceStop(choice)) {
+            if (index < this.own_pokemon.getPartySize()) {
+                if ((choice & 0xFFFF) === this.own_pokemon.pokemon[index].getSpecies()) {
+                    ownMon = RSESPUtils.singleMonToData(this.own_pokemon.pokemon[index]);
+                }
+            }
+        }
+        this.sendWithCounter(this.pool_transfer_out, ownMon);
+    }
+
+    // Link-specific WS methods
+    sendBigTradingData(data) {
+        this.ws.sendData(this.full_transfer, data);
+    }
+
+    getBigTradingData() {
+        if (this.ws.recvDict[this.full_transfer]) {
+            const data = this.ws.recvDict[this.full_transfer];
+            delete this.ws.recvDict[this.full_transfer];
+            return data;
+        }
+        return null;
+    }
+
+    sendChosenMon(choice) {
+        this.sendWithCounter(this.choice_transfer, RSESPUtils.toNBytesLE(choice, 3));
+    }
+
+    getChosenMon() {
+        return this.getThreeBytesOfData(this.getWithCounter(this.choice_transfer));
+    }
+
+    sendAccepted(choice, numAccept) {
+        this.sendWithCounter(this.accept_transfer[numAccept], RSESPUtils.toNBytesLE(choice, 3));
+    }
+
+    getAccepted(numAccept) {
+        return this.getThreeBytesOfData(this.getWithCounter(this.accept_transfer[numAccept]));
+    }
+
+    sendSuccess(choice, numSuccess) {
+        this.sendWithCounter(this.success_transfer[numSuccess], RSESPUtils.toNBytesLE(choice, 3));
+    }
+
+    getSuccess(numSuccess) {
+        return this.getThreeBytesOfData(this.getWithCounter(this.success_transfer[numSuccess]));
+    }
+
+    // ==================== Trade Starting Sequence ====================
+
+    async tradeStartingSequence(sendData) {
+        this.checks.resetSpeciesItemList();
+
+        // First read section
+        const [data, data_other] = await this.readSection(sendData);
+        if (this.stopTrade) return;
+
+        this.own_pokemon = new RSESPTradingData(data);
+
+        // Send our data to server/peer
+        const ourTradingData = this.own_pokemon.createTradingData(this.special_sections_len);
+        this.sendBigTradingData(ourTradingData[0]);
+
+        let finalDataOther = data_other;
+        if (sendData === null || sendData === undefined) {
+            // No data to send - need two-pass approach
+            // Wait for other's data
+            this.log("Waiting for other player's data...");
+            const otherData = await this.forceReceive(() => this.getBigTradingData());
+            if (this.stopTrade) return;
+
+            // Second read section with the other's data
+            const [data2, _] = await this.readSection(otherData);
+            if (this.stopTrade) return;
+
+            this.own_pokemon = new RSESPTradingData(data2);
+            finalDataOther = otherData;
+        }
+
+        this.other_pokemon = new RSESPTradingData(finalDataOther);
+    }
+
+    // ==================== Trade Menu ====================
+
+    async doTrade(getMonFunction, close = false, toServer = false) {
+        let tradeCompleted = false;
+        let baseAutoclose = toServer;
+        let autocloseOnStop = baseAutoclose;
+
+        if (close) {
+            this.logVerbose("Closing trade...");
+        }
+
+        while (!tradeCompleted && !this.stopTrade) {
+            // Get the user's choice from the GBA
+            const sentMon = await this.waitForChoice();
+            if (this.stopTrade) return true;
+
+            let received_choice;
+
+            if (!close) {
+                if (autocloseOnStop && this.isChoiceStop(sentMon)) {
+                    received_choice = this.stop_trade_val;
+                } else {
+                    // Send choice to server/peer
+                    this.logVerbose("Sending choice...");
+                    if (toServer) {
+                        this.sendPoolTradingDataOut(sentMon);
+                    } else {
+                        this.sendChosenMon(sentMon);
+                    }
+
+                    // Get the other player's choice
+                    if (!toServer) {
+                        this.logVerbose("Waiting for other player's choice...");
+                    }
+                    received_choice = await this.forceReceive(getMonFunction);
+                    if (this.stopTrade) return true;
+                    autocloseOnStop = baseAutoclose;
+                }
+            } else {
+                this.resetTrade();
+                received_choice = this.stop_trade_val;
+            }
+
+            if (!this.isChoiceStop(received_choice) && !this.isChoiceStop(sentMon)) {
+                // Send the other player's choice to the GBA
+                await this.sendDataMultipleTimes(this.swapTradeOfferDataPure, received_choice);
+
+                let accepted, received_accepted;
+
+                // Accept/Decline loop (2 rounds)
+                for (let i = 0; i < 2; i++) {
+                    accepted = await this.waitForAcceptDecline(i);
+                    if (this.stopTrade) return true;
+
+                    if (toServer && this.isChoiceDecline(accepted, i)) {
+                        received_accepted = this.decline_trade_value[i];
+                    } else {
+                        if (i === 0) this.logVerbose("Sending accept/decline...");
+                        this.sendAccepted(accepted, i);
+
+                        if (i === 0) this.logVerbose("Waiting for accept/decline response...");
+                        received_accepted = await this.forceReceiveMulti(
+                            (num) => this.getAccepted(num), i
+                        );
+                        if (this.stopTrade) return true;
+                    }
+
+                    // Send other's response to GBA
+                    await this.sendDataMultipleTimes(this.swapTradeRawDataPure, received_accepted);
+                }
+
+                // Check if trade was accepted
+                if (!this.isChoiceDecline(received_accepted, 1) && !this.isChoiceDecline(accepted, 1)) {
+                    let success_result, received_success;
+
+                    // Success loop (7 rounds)
+                    for (let i = 0; i < 7; i++) {
+                        success_result = await this.waitForSuccess(i);
+                        if (this.stopTrade) return true;
+
+                        if (i === 0) this.logVerbose("Sending success confirmation...");
+                        this.sendSuccess(success_result, i);
+
+                        if (i === 0) this.logVerbose("Waiting for success response...");
+                        received_success = await this.forceReceiveMulti(
+                            (num) => this.getSuccess(num), i
+                        );
+                        if (this.stopTrade) return true;
+
+                        await this.sendDataMultipleTimes(this.swapTradeRawDataPure, received_success);
+                    }
+
+                    tradeCompleted = true;
+                    this.logVerbose("Trade completed, restarting...");
+                    this.exit_or_new = true;
+
+                    // Reset WS buffers for next trade
+                    if (this.ws.recvDict[this.full_transfer]) {
+                        delete this.ws.recvDict[this.full_transfer];
+                    }
+
+                    this.resetTrade();
+
+                    if (this.hasFailed(success_result) || this.hasFailed(received_success)) {
+                        return true;
+                    }
+                }
+            } else {
+                if (close || (this.isChoiceStop(sentMon) && this.isChoiceStop(received_choice))) {
+                    // Both want to end
+                    tradeCompleted = true;
+                    this.exit_or_new = true;
+                    this.logVerbose("Closing trade menu...");
+                    await this.endTrade();
+                    return true;
+                } else {
+                    // One doesn't want to trade - prepare to exit on next stop
+                    autocloseOnStop = true;
+                    this.logVerbose("One player cancelled, will close on next stop...");
+
+                    // Still send other's choice to GBA
+                    await this.sendDataMultipleTimes(this.swapTradeOfferDataPure, received_choice);
+                }
+            }
+        }
+
+        this.resetTrade();
+        return false;
+    }
+
+    // ==================== Pool Trade ====================
 
     async poolTradeLoop() {
-        this.log("Connecting to Pool Server...");
-        // Ensure WS is connected
-        if (!this.ws.isConnected) {
-            this.log("WS not connected!");
+        this.log("Starting Pool Trade...");
+
+        if (!this.ws || !this.ws.isConnected) {
+            this.log("WebSocket not connected!");
             return;
         }
 
+        this.resetTrade();
+        this.exit_or_new = true;
+
         while (!this.stopTrade) {
-            // 1. Get Pool Data
-            this.log("Requesting Pokemon from Pool...");
-            let poolMon = null;
+            // 1. Get pool pokemon from server
+            if (this.other_pokemon === null) {
+                this.log("Requesting Pokemon from Pool...");
+                this.ws.sendGetData(this.pool_transfer);
 
-            this.ws.sendGetData(this.pool_transfer);
-            const poolData = await this.waitForMessage(this.pool_transfer);
+                // Wait for pool response
+                const poolData = await this.waitForMessage(this.pool_transfer);
+                if (this.stopTrade) return;
 
-            // poolData is [Counter, Data...]
-            // Check for valid data
-            if (poolData.length <= 2) {
-                this.log("Pool returned valid, but empty? Retrying...");
-                continue;
+                if (!poolData || poolData.length <= 2) {
+                    this.log("Pool returned empty response, retrying...");
+                    await this.sleep(1000);
+                    continue;
+                }
+
+                // Parse pool mon (skip counter byte)
+                const monDataRaw = poolData.slice(1);
+                const receivedMon = RSESPUtils.singleMonFromData(this.checks, monDataRaw);
+
+                if (!receivedMon) {
+                    this.log("Invalid pool pokemon, retrying...");
+                    await this.sleep(1000);
+                    continue;
+                }
+
+                // Build pool party
+                const poolParty = await this._loadPoolParty(receivedMon[0], receivedMon[1]);
+                if (!poolParty) {
+                    this.log("Failed to build pool party, retrying...");
+                    await this.sleep(1000);
+                    continue;
+                }
+                this.other_pokemon = poolParty;
+            } else {
+                this.logVerbose("Reusing previous pool data");
             }
 
-            // Parse Pool Mon
-            const monDataRaw = poolData.slice(1); // Skip counter
-            // Actually the python: mon = self.party_reader(GSCUtilsMisc.read_data(self.fileBaseTargetName), do_full=False)
-            // It builds a party.
-            // But here we can just create the Info object for the single mon to send.
+            // 2. Trade starting sequence with pool data
+            const sendData = this.other_pokemon.createTradingData(this.special_sections_len)[0];
+            await this.tradeStartingSequence(sendData);
+            if (this.stopTrade) return;
 
-            // The protocol exchanges the entire 896 byte structure (Party info)
-            // But the Pool only sends one Pokemon.
-            // We need to wrap it into a dummy party structure.
-            // Or does readSection handle it?
+            // 3. Enter trade menu
+            this.log("Entering trade menu...");
+            const getFirstMon = () => {
+                return this.first_trade_index | this.other_pokemon.pokemon[0].getSpecies();
+            };
 
-            // Python: self.other_pokemon = self.party_reader(data_other)
-            // data_other comes from read_section.
-
-            // So we need to:
-            // 1. Construct a dummy party containing the Pool's pokemon.
-            // 2. Exchange that via `readSection` with the GBA.
-
-            const poolMonInfo = new RSESPTradingPokemonInfo(monDataRaw, 0, 0x64, true); // Encrypted? Pool sends encrypted?
-            // Python reference: received_mon = self.utils_class.single_mon_from_data(self.trader.checks, mon)
-            // And then inserts into party.
-
-            const dummyPartyData = this.createDummyParty(poolMonInfo);
-
-            this.log("Starting Trade Sequence with GBA...");
-
-            // Exchange Data
-            // readSection returns [theirData, ourData (that we sent)]? 
-            // In my JS port `readSection` returns the received data. 
-            // It takes `sendData` as input.
-            const receivedPartyData = await this.readSection(dummyPartyData);
-
-            // Parse received party
-            // We need to find which Pokemon the user selected
-            // But that happens later in the menu loop.
-            // Here we just got their party.
-
-            // Now enter Trade Menu Loop
-            await this.doTradeMenu(receivedPartyData, dummyPartyData);
+            if (await this.doTrade(getFirstMon, false, true)) {
+                break;
+            }
         }
     }
 
-    createDummyParty(monInfo) {
-        // Create an 896-byte buffer representing a party with 1 pokemon (the pool mon)
-        const buf = new Uint8Array(896);
-        // Fill properly...
-        // Header: Count (4 bytes)
-        RSESPUtils.writeInt(buf, 0xE4, 1); // trading_party_info_pos
-
-        // Pokemon Data
-        const monData = monInfo.getData();
-        // Copy to trading_pokemon_pos (0xE8)
-        buf.set(monData.slice(0, 100), 0xE8);
-
-        // Mail/Version/Ribbon need to be copied too if present
-
-        // Calculate Checksums
-        // Pass wrapped array for lengths as expected by generateChecksum
-        RSESPTradingData.generateChecksum(buf, this.special_sections_len);
-
-        return buf;
-    }
-
-    async doTradeMenu(receivedPartyData, sentPartyData) {
-        // ... Implement the specific Choice/Accept/Success loop ...
-        // See do_trade in Python
-        this.log("Entering Trade Menu...");
-
-        let tradeCompleted = false;
-
-        while (!tradeCompleted && !this.stopTrade) {
-            // Wait for Choice
-            // For now, let's just log and loop to prove connection
-            // We need to implement swapTradeOfferDataPure loop
-
-            let sentMon = 0; // We are the server (Pool), we offer index 0 (the pool mon)
-            // But in Python: sent_mon = self.wait_for_choice(0)
-            // Wait, Python's `pool_trade`:
-            // 1. `do_trade(..., to_server=True)`
-            // 2. `sent_mon = self.wait_for_choice(0)` -> Gets what WE (Script) selected? 
-            //    No, `wait_for_choice` reads from the GBA what the GBA selected?
-            //    Actually `wait_for_choice` usually waits for the local user selection in UI apps.
-            //    But here the script acts as the "Other Player".
-            //    In `pool_trade`, `self.get_first_mon` is passed as `get_mon_function`.
-
-            // The script sends ITS choice (Index 0, the pool mon).
-            // It Receives the GBA's choice.
-
-            // 1. Send our choice (Index 0 + Species)
-            // 2. Receive GBA choice
-
-            const myChoice = this.first_trade_index | 0; // Index 0? Need species too?
-            // Python: `self.first_trade_index | self.other_pokemon.pokemon[0].get_species()`
-            // `other_pokemon` in python context is the one from Pool.
-
-            // Need to parse species from sentPartyData
-            // ...
-
-            await this.sleep(100);
-            // Placeholder to break loop
-            tradeCompleted = true;
+    async _loadPoolParty(mon, isEgg) {
+        // Load base_pool.bin
+        const baseData = await RSESPUtils.fetchBin(this.base_pool_path);
+        if (!baseData) {
+            this.log("Failed to load base_pool.bin");
+            return null;
         }
 
-        this.log("Trade Menu Loop Finished (Placeholder)");
+        // Create party from base data, not parsing pokemon (doFull=false)
+        const party = new RSESPTradingData(baseData, null, false);
+
+        // Handle max level
+        if (mon.getLevel() > this.maxLevel) {
+            mon.setLevel(this.maxLevel);
+        }
+
+        // Add the pool mon
+        party.pokemon.push(mon);
+        party.partyInfo.total = 1;
+
+        // If it's not an egg, set species ID
+        // (partyInfo.setId is a no-op for gen3, species is stored in the mon itself)
+
+        return party;
     }
 
-    // Helper to wait for WS message (reused from GSCTrading or reimplemented)
+    // ==================== Link Trade ====================
+
+    async linkTradeLoop() {
+        this.log("Starting Link Trade...");
+
+        if (!this.ws || !this.ws.isConnected) {
+            this.log("WebSocket not connected!");
+            return;
+        }
+
+        this.resetTrade();
+        this.exit_or_new = true;
+        let valid = true;
+
+        while (!this.stopTrade) {
+            // Trade starting sequence (null = read-only first pass, then get peer data)
+            await this.tradeStartingSequence(null);
+            if (this.stopTrade) return;
+
+            // Enter trade menu
+            this.log("Entering trade menu...");
+            const getChosenMon = () => this.getChosenMon();
+
+            if (await this.doTrade(getChosenMon, !valid)) {
+                break;
+            }
+        }
+    }
+
+    // ==================== Helpers ====================
+
     waitForMessage(type) {
         return new Promise((resolve) => {
             const check = () => {
+                if (this.stopTrade) {
+                    resolve(null);
+                    return;
+                }
                 if (this.ws.recvDict[type]) {
                     const data = this.ws.recvDict[type];
                     delete this.ws.recvDict[type];
