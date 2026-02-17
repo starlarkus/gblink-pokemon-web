@@ -477,6 +477,9 @@ export class RSESPTrading extends TradingProtocol {
             }
             return null;
         }
+        // Send a GET request to the server to request this data
+        // (issues GETs when data is missing)
+        this.ws.sendGetData(tag);
         return null;
     }
 
