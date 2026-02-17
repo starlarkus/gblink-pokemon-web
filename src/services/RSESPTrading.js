@@ -425,6 +425,9 @@ export class RSESPTrading extends TradingProtocol {
     resetTrade() {
         this.own_pokemon = null;
         this.other_pokemon = null;
+        // Reset counter state for new trade round
+        this.own_id = null;
+        this.other_id = null;
     }
 
     // ==================== Force Receive Helpers ====================

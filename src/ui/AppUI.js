@@ -540,7 +540,8 @@ export class AppUI {
                 isBuffered,
                 doSanityChecks,
                 {
-                    verbose: this.settings.get('verbose')
+                    verbose: this.settings.get('verbose'),
+                    maxLevel: this.settings.get('maxLevel')
                 }
             );
         }
