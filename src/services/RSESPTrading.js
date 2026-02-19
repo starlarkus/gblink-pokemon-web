@@ -571,6 +571,9 @@ export class RSESPTrading extends TradingProtocol {
             delete this.ws.recvDict[this.full_transfer];
             return data;
         }
+        // Send GET request to the server to retrieve peer's data
+        // (matches Python recv_data which issues GET when data is missing)
+        this.ws.sendGetData(this.full_transfer);
         return null;
     }
 
@@ -856,29 +859,39 @@ export class RSESPTrading extends TradingProtocol {
     // ==================== Link Trade ====================
 
     async linkTradeLoop() {
-        this.log("Starting Link Trade...");
+        this.log("Starting 2-Player Link Trade...");
 
         if (!this.ws || !this.ws.isConnected) {
             this.log("WebSocket not connected!");
             return;
         }
 
+        // Matches Python player_trade: reset_trade, exit_or_new = True
         this.resetTrade();
         this.exit_or_new = true;
         let valid = true;
 
         while (!this.stopTrade) {
-            // Trade starting sequence (null = read-only first pass, then get peer data)
+            // Exchange trading data with peer (always buffered)
+            // tradeStartingSequence(null) → two-pass approach:
+            //   1. readSection(null) reads our GBA data
+            //   2. Sends our data via FL3S
+            //   3. Waits for peer's FL3S data
+            //   4. readSection(peerData) writes peer data to our GBA
+            this.log("Exchanging party data with other player...");
             await this.tradeStartingSequence(null);
             if (this.stopTrade) return;
 
-            // Enter trade menu
-            this.log("Entering trade menu...");
+            this.log("Data exchange complete. Entering trade menu...");
             const getChosenMon = () => this.getChosenMon();
 
+            // doTrade returns true to break (trade ended/failed), false to continue
             if (await this.doTrade(getChosenMon, !valid)) {
                 break;
             }
+
+            // Trade completed successfully — loop back for another trade
+            this.log("Trade complete! Ready for next trade...");
         }
     }
 
