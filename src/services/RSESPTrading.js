@@ -52,6 +52,7 @@ export class RSESPTrading extends TradingProtocol {
         this.own_pokemon = null;
         this.other_pokemon = null;
         this.exit_or_new = false;
+        this._lastReceivedFL3S = null; // Stale FL3S detection for subsequent link trades
 
         // Counter state for WS message sequencing (matches Python send_with_counter/get_with_counter)
         this.own_id = null;
@@ -644,7 +645,22 @@ export class RSESPTrading extends TradingProtocol {
             }
 
             this.log("Waiting for other player's data...");
-            const otherData = await this.forceReceive(() => this.getBigTradingData());
+            const lastFL3S = this._lastReceivedFL3S;
+            const otherData = await this.forceReceive(() => {
+                const data = this.getBigTradingData();
+                // Reject stale FL3S from server cache (first-trade data)
+                // The server returns cached peer FL3S before the peer pushes fresh data
+                if (data && lastFL3S && data.length === lastFL3S.length) {
+                    let same = true;
+                    for (let j = 0; j < data.length; j++) {
+                        if (data[j] !== lastFL3S[j]) { same = false; break; }
+                    }
+                    if (same) return null; // stale, keep waiting
+                }
+                return data;
+            });
+            // Save for stale detection on next trade
+            this._lastReceivedFL3S = otherData ? new Uint8Array(otherData) : null;
             if (this.stopTrade) return;
 
             // Second read section with the other's data
