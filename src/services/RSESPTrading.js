@@ -752,10 +752,11 @@ export class RSESPTrading extends TradingProtocol {
                     this.logVerbose("Trade completed, restarting...");
                     this.exit_or_new = true;
 
-                    // recvDict is cleaned at the right time by tradeStartingSequence
-                    // sendDict is overwritten by the next sendBigTradingData() call
-                    // Clearing them here caused a race condition where a faster
-                    // peer's early FL3S for the next trade was destroyed.
+                    // Clear sendDict so stale FL3S isn't served to the peer's
+                    // GET requests between trades (would cause wrong party data).
+                    // Do NOT clear recvDict — a faster peer's early FL3S for the
+                    // next trade must be preserved to avoid a deadlock.
+                    delete this.ws.sendDict[this.full_transfer];
 
                     // Preserve counters between link trades so stale retransmissions
                     // (with old counter values) are rejected by getWithCounter
