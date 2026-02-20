@@ -422,14 +422,15 @@ export class RSESPTrading extends TradingProtocol {
         await this.sendDataMultipleTimes(this.swapTradeOfferDataPure, this.stop_trade_val);
     }
 
-    resetTrade() {
+    resetTrade(resetCounters = true) {
         this.own_pokemon = null;
         this.other_pokemon = null;
-        // Reset counter state for new trade round
-        this.own_id = null;
-        this.other_id = null;
-        // Clear stale counter-based recvDict entries from previous trade
-        // to prevent retransmissions from contaminating the next trade
+        if (resetCounters) {
+            // Full counter reset - used for pool trades and initial link trade setup
+            this.own_id = null;
+            this.other_id = null;
+        }
+        // Clear stale counter-based recvDict/sendDict entries from previous trade
         const counterTags = [
             this.pool_transfer,
             this.pool_transfer_out,
@@ -439,6 +440,7 @@ export class RSESPTrading extends TradingProtocol {
         ];
         for (const tag of counterTags) {
             delete this.ws.recvDict[tag];
+            delete this.ws.sendDict[tag];
         }
     }
 
@@ -627,7 +629,20 @@ export class RSESPTrading extends TradingProtocol {
         let finalDataOther = data_other;
         if (sendData === null || sendData === undefined) {
             // No data to send - need two-pass approach
-            // Wait for other's data
+            // Clear any stale FL3S retransmissions that arrived during readSection
+            // so we only consume fresh data from the peer's second trade
+            delete this.ws.recvDict[this.full_transfer];
+
+            // Also flush stale counter-tag retransmissions that arrived during readSection
+            const counterTags = [
+                this.choice_transfer,
+                ...this.accept_transfer,
+                ...this.success_transfer,
+            ];
+            for (const tag of counterTags) {
+                delete this.ws.recvDict[tag];
+            }
+
             this.log("Waiting for other player's data...");
             const otherData = await this.forceReceive(() => this.getBigTradingData());
             if (this.stopTrade) return;
@@ -743,7 +758,9 @@ export class RSESPTrading extends TradingProtocol {
                     // (matches Python: self.comms.reset_big_trading_data())
                     this.resetBigTradingData();
 
-                    this.resetTrade();
+                    // Preserve counters between link trades so stale retransmissions
+                    // (with old counter values) are rejected by getWithCounter
+                    this.resetTrade(false);
 
                     if (this.hasFailed(success_result) || this.hasFailed(received_success)) {
                         return true;
