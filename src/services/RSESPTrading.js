@@ -569,13 +569,7 @@ export class RSESPTrading extends TradingProtocol {
         this.ws.sendData(this.full_transfer, data);
     }
 
-    // Clear both send and recv buffers for FL3S (matches Python reset_big_trading_data)
-    // Critical: sendDict must be cleared so stale FL3S isn't returned
-    // in response to server GET requests between trades
-    resetBigTradingData() {
-        delete this.ws.recvDict[this.full_transfer];
-        delete this.ws.sendDict[this.full_transfer];
-    }
+
 
     getBigTradingData() {
         if (this.ws.recvDict[this.full_transfer]) {
@@ -758,9 +752,10 @@ export class RSESPTrading extends TradingProtocol {
                     this.logVerbose("Trade completed, restarting...");
                     this.exit_or_new = true;
 
-                    // Reset FL3S buffers for next trade
-                    // (matches Python: self.comms.reset_big_trading_data())
-                    this.resetBigTradingData();
+                    // recvDict is cleaned at the right time by tradeStartingSequence
+                    // sendDict is overwritten by the next sendBigTradingData() call
+                    // Clearing them here caused a race condition where a faster
+                    // peer's early FL3S for the next trade was destroyed.
 
                     // Preserve counters between link trades so stale retransmissions
                     // (with old counter values) are rejected by getWithCounter
