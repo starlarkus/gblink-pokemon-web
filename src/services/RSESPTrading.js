@@ -625,9 +625,8 @@ export class RSESPTrading extends TradingProtocol {
         let finalDataOther = data_other;
         if (sendData === null || sendData === undefined) {
             // No data to send - need two-pass approach
-            // Clear any stale FL3S retransmissions that arrived during readSection
-            // so we only consume fresh data from the peer's second trade
-            delete this.ws.recvDict[this.full_transfer];
+            // recvDict[FL3S] was already cleared at the end of doTrade,
+            // so any FL3S here is fresh from the peer (arrived during readSection).
 
             // Also flush stale counter-tag retransmissions that arrived during readSection
             const counterTags = [
@@ -752,11 +751,13 @@ export class RSESPTrading extends TradingProtocol {
                     this.logVerbose("Trade completed, restarting...");
                     this.exit_or_new = true;
 
-                    // Clear sendDict so stale FL3S isn't served to the peer's
-                    // GET requests between trades (would cause wrong party data).
-                    // Do NOT clear recvDict — a faster peer's early FL3S for the
-                    // next trade must be preserved to avoid a deadlock.
+                    // Clear both FL3S dicts so stale data from this trade
+                    // doesn't leak into the next one:
+                    //  - sendDict: prevents stale FL3S being served to peer GETs
+                    //  - recvDict: cleared NOW (early) so fresh FL3S arriving
+                    //    during the next readSection() is preserved, not destroyed
                     delete this.ws.sendDict[this.full_transfer];
+                    delete this.ws.recvDict[this.full_transfer];
 
                     // Preserve counters between link trades so stale retransmissions
                     // (with old counter values) are rejected by getWithCounter
