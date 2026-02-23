@@ -915,8 +915,11 @@ export class RSESPTrading extends TradingProtocol {
                 break;
             }
 
-            // Trade completed successfully — loop back for another trade
+            // Trade completed successfully — give GBA time to finish its save
+            // animation and return to the party data exchange state before
+            // we start the next readSection.
             this.log("Trade complete! Ready for next trade...");
+            await this.sleep(500);
         }
     }
 
