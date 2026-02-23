@@ -305,6 +305,7 @@ export class RSESPTrading extends TradingProtocol {
             // back to the party data exchange state.
             if (!res.is_valid && !res.is_asking && !res.is_complete && !res.is_done) {
                 sinceLastUseful = this.since_last_useful_limit;
+                await this.sleep(10);
             }
 
             if (res.is_asking) {
