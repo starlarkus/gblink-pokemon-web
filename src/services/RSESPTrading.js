@@ -301,11 +301,9 @@ export class RSESPTrading extends TradingProtocol {
 
             // If GBA returned all-zero (no flags set = not ready/idle),
             // stay in askTradeSetupData mode to keep prompting the GBA.
-            // This is critical between trades when the GBA is transitioning
-            // back to the party data exchange state.
             if (!res.is_valid && !res.is_asking && !res.is_complete && !res.is_done) {
                 sinceLastUseful = this.since_last_useful_limit;
-                await this.sleep(10);
+                await this.sleep(50);
             }
 
             if (res.is_asking) {
