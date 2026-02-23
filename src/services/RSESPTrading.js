@@ -857,7 +857,18 @@ export class RSESPTrading extends TradingProtocol {
             };
 
             if (await this.doTrade(getFirstMon, false, true)) {
-                break;
+                // Trade was cancelled on the GBA — reconnect WebSocket
+                // to force the server to assign a fresh pool pokemon
+                this.resetTrade(true);
+                delete this.ws.recvDict[this.pool_transfer];
+
+                this.log("Trade cancelled. Reconnecting for fresh pool Pokemon...");
+                const serverUrl = this.ws.url;
+                this.ws.disconnect();
+                await this.sleep(500);
+                await this.ws.connect(serverUrl);
+                this.log("Reconnected! Requesting new pool Pokemon...");
+                continue;
             }
         }
     }
