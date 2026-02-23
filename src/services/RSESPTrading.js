@@ -71,7 +71,7 @@ export class RSESPTrading extends TradingProtocol {
                 val & 0xFF
             ]);
             await this.usb.writeBytes(tx);
-            const rx = await this.usb.readBytesRaw(4);
+            const rx = await this.usb.readBytesRaw(4, 2000);
             if (!rx || rx.length < 4) return 0;
             return ((rx[0] << 24) | (rx[1] << 16) | (rx[2] << 8) | rx[3]) >>> 0;
         };
