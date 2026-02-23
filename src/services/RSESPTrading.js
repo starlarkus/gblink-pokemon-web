@@ -299,6 +299,14 @@ export class RSESPTrading extends TradingProtocol {
 
             sinceLastUseful++;
 
+            // If GBA returned all-zero (no flags set = not ready/idle),
+            // stay in askTradeSetupData mode to keep prompting the GBA.
+            // This is critical between trades when the GBA is transitioning
+            // back to the party data exchange state.
+            if (!res.is_valid && !res.is_asking && !res.is_complete && !res.is_done) {
+                sinceLastUseful = this.since_last_useful_limit;
+            }
+
             if (res.is_asking) {
                 otherPos = res.other_pos_gen3;
                 otherEnd = res.other_end_gen3;
@@ -915,11 +923,10 @@ export class RSESPTrading extends TradingProtocol {
                 break;
             }
 
-            // Trade completed successfully — give GBA time to finish its save
-            // animation and return to the party data exchange state before
-            // we start the next readSection.
+            // Trade completed successfully — loop back for another trade.
+            // readSection will keep sending askTradeSetupData prompts until
+            // the GBA is ready.
             this.log("Trade complete! Ready for next trade...");
-            await this.sleep(500);
         }
     }
 
