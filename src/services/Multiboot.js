@@ -1,24 +1,10 @@
 /**
  * GBA Multiboot Implementation for WebUSB
- * Sends a ROM file to a GBA via the link cable using the multiboot protocol.
+ * Supports both old (reconfigurable) and new (GBLink unified) firmware.
+ * Uses batched SPI transfers for dramatically faster ROM loading.
  */
 
-const CONFIG_SIGNATURE = [
-    0xCA, 0xFE, 0xCA, 0xFE, 0xCA, 0xFE, 0xCA, 0xFE,
-    0xCA, 0xFE, 0xCA, 0xFE, 0xCA, 0xFE, 0xCA, 0xFE,
-    0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF,
-    0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF
-];
-
-function getConfigureList(usBetweenTransfer, bytesForTransfer) {
-    const config = new Uint8Array(36);
-    for (let i = 0; i < 32; i++) config[i] = CONFIG_SIGNATURE[i];
-    config[32] = usBetweenTransfer & 0xFF;
-    config[33] = (usBetweenTransfer >> 8) & 0xFF;
-    config[34] = (usBetweenTransfer >> 16) & 0xFF;
-    config[35] = bytesForTransfer & 0xFF;
-    return config;
-}
+import { MODE } from './UsbConnection.js';
 
 function delay(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
@@ -55,9 +41,6 @@ async function Spi32(usb, val) {
  * Send multiple 32-bit SPI words in a single USB transfer.
  * The firmware processes them as sequential 4-byte SPI exchanges
  * and returns all results at once, drastically reducing USB round-trips.
- * @param {UsbConnection} usb
- * @param {number[]} values - Array of 32-bit values to send
- * @returns {number[]|null} Array of 32-bit responses, or null on failure
  */
 async function Spi32Batch(usb, values) {
     const count = values.length;
@@ -82,13 +65,9 @@ async function Spi32Batch(usb, values) {
         totalReceived += chunk.length;
     }
 
-    // Merge chunks into single buffer
     const rxBatch = new Uint8Array(totalReceived);
     let offset = 0;
-    for (const chunk of chunks) {
-        rxBatch.set(chunk, offset);
-        offset += chunk.length;
-    }
+    for (const chunk of chunks) { rxBatch.set(chunk, offset); offset += chunk.length; }
 
     const results = [];
     for (let i = 0; i < count; i++) {
@@ -98,46 +77,57 @@ async function Spi32Batch(usb, values) {
     return results;
 }
 
-// Max words per USB batch. 8 words × 4 bytes = 32 bytes.
-// Kept under 64 bytes to fit comfortably within the firmware's TX FIFO.
-const BATCH_WORDS = 8;
+// Max words per USB batch. 14 × 4 = 56 bytes — safely below the 64-byte ZLP boundary.
+const BATCH_WORDS = 14;
 
 export async function multiboot(usb, romData, log = console.log) {
     const fdata = new Uint8Array(romData);
     let fsize = fdata.length;
 
     if (fsize > 0x40000) {
-        log("File size Error Max 256KB", "error");
+        log('File size Error Max 256KB', 'error');
         return false;
     }
 
     log(`ROM size: ${fsize} bytes (${(fsize / 1024).toFixed(1)} KB)`);
 
-    // Pad data
     const paddedData = new Uint8Array(fsize + 0x10);
     paddedData.set(fdata);
 
-    // Configure firmware
-    log("Configuring firmware for GBA mode...");
-    const config = getConfigureList(36, 4);
-    await usb.writeBytes(config);
-    await readAll(usb);
+    log('Configuring firmware for GBA multiboot...');
 
-    // Wait for GBA
-    log("Waiting for GBA... Turn on your GBA with the link cable connected.");
+    if (usb.isNewFirmware) {
+        // Voltage (3.3V) is already set by AppUI before calling this function.
+        await usb.setMode(MODE.GB_LINK);
+        await delay(100);
+    }
+
+    // Configure timing: 36µs between transfers, 4 bytes per transfer (32-bit SPI)
+    await usb.setTimingConfig(36, 4);
+
+    // Old firmware: drain stale bytes left by the magic config packet.
+    // New firmware: skip — config goes to the command endpoint; a spurious
+    //               transferIn would consume the first real SPI response.
+    if (!usb.isNewFirmware) {
+        await readAll(usb);
+    }
+
+    log('Waiting for GBA... Turn on your GBA with the link cable connected.');
 
     let recv, attempts = 0;
     do {
-        recv = (await Spi32(usb, 0x6202)) >>> 16;
+        const raw = await Spi32(usb, 0x6202);
+        recv = raw >>> 16;
         await delay(10);
         attempts++;
-        if (attempts % 100 === 0) log(`Still waiting... (${attempts / 100}s)`, "info");
-        if (attempts > 6000) { log("Timeout", "error"); return false; }
+        if (attempts <= 5 || attempts % 100 === 0) {
+            log(`SPI poll #${attempts}: sent 0x6202, got 0x${raw.toString(16).padStart(8, '0')} (upper=0x${recv.toString(16)})`, 'info');
+        }
+        if (attempts > 6000) { log('Timeout', 'error'); return false; }
     } while (recv !== 0x7202);
 
-    log("GBA detected! Starting transfer...", "success");
+    log('GBA detected! Starting transfer...', 'success');
 
-    // Handshake
     await Spi32(usb, 0x6102);
 
     // Send header (0x00–0xC0) in batches
@@ -146,9 +136,8 @@ export async function multiboot(usb, romData, log = console.log) {
         headerWords.push(paddedData[i] | (paddedData[i + 1] << 8));
     }
     for (let i = 0; i < headerWords.length; i += BATCH_WORDS) {
-        const batch = headerWords.slice(i, i + BATCH_WORDS);
-        const results = await Spi32Batch(usb, batch);
-        if (!results) { log("Header transfer failed", "error"); return false; }
+        const results = await Spi32Batch(usb, headerWords.slice(i, i + BATCH_WORDS));
+        if (!results) { log('Header transfer failed', 'error'); return false; }
     }
 
     await Spi32(usb, 0x6200);
@@ -156,11 +145,10 @@ export async function multiboot(usb, romData, log = console.log) {
     await Spi32(usb, 0x63D1);
 
     const token = await Spi32(usb, 0x63D1);
-    if ((token >>> 24) !== 0x73) { log("Failed handshake!", "error"); return false; }
+    if ((token >>> 24) !== 0x73) { log('Failed handshake!', 'error'); return false; }
 
-    log("Handshake successful!", "success");
+    log('Handshake successful!', 'success');
 
-    // CRC setup
     let crcA = (token >>> 16) & 0xFF;
     let seed = (0xFFFF00D1 | (crcA << 8)) >>> 0;
     crcA = (crcA + 0x0F) & 0xFF;
@@ -176,24 +164,20 @@ export async function multiboot(usb, romData, log = console.log) {
 
     log(`Sending data (${fsize} bytes)...`);
 
-    // Bulk data transfer (0xC0–fsize) in batches
     let lastProgress = -1;
     for (let i = 0xC0; i < fsize;) {
         const wordsInBatch = Math.min(BATCH_WORDS, (fsize - i) / 4);
         const batchValues = [];
 
-        // Pre-compute all encrypted words for this batch
         for (let w = 0; w < wordsInBatch; w++) {
             const offset = i + w * 4;
 
-            // Read 32-bit little-endian
             let dat = paddedData[offset] |
                 (paddedData[offset + 1] << 8) |
                 (paddedData[offset + 2] << 16) |
                 ((paddedData[offset + 3] << 24) >>> 0);
             dat = dat >>> 0;
 
-            // CRC step
             let tmp = dat;
             for (let b = 0; b < 32; b++) {
                 const bit = (crcC ^ tmp) & 1;
@@ -201,43 +185,38 @@ export async function multiboot(usb, romData, log = console.log) {
                 tmp = tmp >>> 1;
             }
 
-            // Encrypt step - use BigInt to avoid precision loss!
             seed = Number((BigInt(seed) * 0x6F646573n + 1n) & 0xFFFFFFFFn);
             dat = (seed ^ dat ^ ((0xFE000000 - offset) >>> 0) ^ 0x43202F2F) >>> 0;
 
             batchValues.push(dat);
         }
 
-        // Send batch and read all responses
         const responses = await Spi32Batch(usb, batchValues);
         if (!responses) {
-            log(`Read timeout during batch transfer at byte ${i}`, "error");
+            log(`Read timeout during batch transfer at byte ${i}`, 'error');
             return false;
         }
 
-        // Verify each response
         for (let w = 0; w < wordsInBatch; w++) {
             const offset = i + w * 4;
             const chk = (responses[w] >>> 16) & 0xFFFF;
             if (chk !== (offset & 0xFFFF)) {
-                log(`Transmission error at byte ${offset}: expected 0x${(offset & 0xFFFF).toString(16)}, got 0x${chk.toString(16)}`, "error");
+                log(`Transmission error at byte ${offset}: expected 0x${(offset & 0xFFFF).toString(16)}, got 0x${chk.toString(16)}`, 'error');
                 return false;
             }
         }
 
         i += wordsInBatch * 4;
 
-        // Progress
         const progress = Math.floor(((i - 0xC0) / (fsize - 0xC0)) * 10);
         if (progress > lastProgress) {
-            log(`Progress: ${progress * 10}%`, "info");
+            log(`Progress: ${progress * 10}%`, 'info');
             lastProgress = progress;
         }
     }
 
-    log("Data sent successfully!", "success");
+    log('Data sent successfully!', 'success');
 
-    // Final CRC
     let tmp = ((0xFFFF0000 | (crcB << 8) | crcA) >>> 0);
     for (let b = 0; b < 32; b++) {
         const bit = (crcC ^ tmp) & 1;
@@ -245,8 +224,7 @@ export async function multiboot(usb, romData, log = console.log) {
         tmp = tmp >>> 1;
     }
 
-    // Acknowledgment
-    log("Waiting for GBA acknowledgment...");
+    log('Waiting for GBA acknowledgment...');
     await Spi32(usb, 0x0065);
 
     do {
@@ -257,9 +235,7 @@ export async function multiboot(usb, romData, log = console.log) {
     await Spi32(usb, 0x0066);
     await Spi32(usb, crcC & 0xFFFF);
 
-    log("Multiboot complete! ROM loaded.", "success");
+    log('Multiboot complete! ROM loaded.', 'success');
     await delay(1000);
     return true;
 }
-
-export { getConfigureList };
