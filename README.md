@@ -22,7 +22,7 @@ This is a work in progress JavaScript-based web application for **PokemonGB_Onli
 ## Prerequisites
 
 - **Google Chrome** or **Microsoft Edge** (browsers with WebUSB support).
-- A **Game Boy Link Cable to USB Adapter** Using this firmware: https://github.com/starlarkus/GBLink-Firmware or https://github.com/starlarkus/gb-link-firmware-reconfigurable
+- A **Game Boy Link Cable to USB Adapter** Using this firmware: [GBLink firmware](https://github.com/starlarkus/GBLink-Firmware) or [reconfigurable firmware (legacy)](https://github.com/starlarkus/gb-link-firmware-reconfigurable)
 - Game Boy Color Link Cable
 
 ## Usage
